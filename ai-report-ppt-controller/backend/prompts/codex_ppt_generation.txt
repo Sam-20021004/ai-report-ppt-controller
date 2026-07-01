@@ -1,0 +1,22 @@
+你是自动化办公文件生成 Agent。请根据以下结构化内容生成 PPT。
+
+任务：
+{task_title}
+
+PPT 模板路径：
+{ppt_template_path}
+
+Slide JSON：
+{slide_json}
+
+要求：
+1. 保留模板的主题、字体和基本版式；
+2. 每页标题清晰；
+3. 每页内容不超过 5 个要点；
+4. 专业报告风格；
+5. 生成 speaker notes；
+6. 输出 pptx 文件；
+7. 同时保存 slide_data.json；
+8. 生成错误日志。
+
+如果模板无法读取，请使用默认专业模板生成。

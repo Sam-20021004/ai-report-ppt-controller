@@ -1,0 +1,17 @@
+[project]
+name = "ai-report-ppt-controller"
+version = "0.1.0"
+description = "Windows desktop/web controller for Codex, Hermes, Chrome CLI, PPT and Word generation workflows."
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.30",
+  "pydantic>=2.8",
+  "python-multipart>=0.0.9",
+  "python-pptx>=1.0",
+  "python-docx>=1.1",
+  "playwright>=1.45"
+]
+
+[tool.pytest.ini_options]
+testpaths = ["backend/tests"]

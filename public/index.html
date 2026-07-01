@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>联网分析 PPT 生成器</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <aside class="task-panel" aria-label="任务输入">
+        <h1>任务输入</h1>
+
+        <form id="generator-form" class="task-form">
+          <label class="field">
+            <span>自然语言问题 / PPT主题</span>
+            <textarea id="topic" name="topic" rows="4" required placeholder="例：GaN全球产业知识产权与技术竞争格局分析">AI Agent 在企业服务中的落地机会</textarea>
+          </label>
+
+          <label class="field">
+            <span>PPT描述 / 搜索边界</span>
+            <textarea id="searchBoundary" name="searchBoundary" rows="4" placeholder="请手动输入检索边界、适用对象、地区/时间范围、数据库要求等。">聚焦企业服务、SaaS、流程自动化与知识工作场景，优先使用近两年资料。</textarea>
+          </label>
+
+          <label class="field">
+            <span>PPT结构输入（重要）</span>
+            <textarea id="structure" name="structure" rows="4" placeholder="请逐行输入期望章节结构，例如：\A1. 行业背景\A2. 市场机会\A3. 风险约束\A4. 行动建议">1. 现状与趋势
+2. 典型应用场景
+3. 机会与风险
+4. 行动路线</textarea>
+          </label>
+
+          <div class="split-row">
+            <label class="field">
+              <span>目标页数</span>
+              <input id="slideCount" name="slideCount" type="number" min="5" max="12" value="8">
+            </label>
+
+            <label class="field">
+              <span>Agent</span>
+              <select id="agent" name="agent">
+                <option value="local">local-research</option>
+                <option value="openai">openai-enhanced</option>
+                <option value="browser">browser-agent</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="split-row">
+            <label class="field">
+              <span>搜索深度</span>
+              <input id="searchDepth" name="searchDepth" type="number" min="1" max="4" value="2">
+            </label>
+
+            <label class="field">
+              <span>语言</span>
+              <select id="language" name="language">
+                <option value="zh" selected>中文</option>
+                <option value="en">English</option>
+              </select>
+            </label>
+          </div>
+
+          <label class="field">
+            <span>上传材料</span>
+            <input id="materials" name="materials" type="file" multiple>
+          </label>
+
+          <button id="upload-button" class="small-action blue" type="button">上传到后端</button>
+
+          <label class="check-row">
+            <input id="enableWeb" name="enableWeb" type="checkbox" checked>
+            <span>启用普通HTTP联网检索</span>
+          </label>
+
+          <label class="check-row">
+            <input id="includeNotes" name="includeNotes" type="checkbox" checked>
+            <span>PPT生成时写入演讲者备注</span>
+          </label>
+
+          <div class="button-grid">
+            <button id="search-button" class="action blue" type="button">HTTP 检索</button>
+            <button id="agent-button" class="action slate" type="button">调用Agent</button>
+            <button id="health-button" class="action green" type="button">检测Agent连接</button>
+            <button id="install-button" class="action slate" type="button">Agent安装状态</button>
+          </div>
+
+          <button class="generate-action" type="submit">生成PPT + Loop QA</button>
+        </form>
+
+        <div class="side-status">
+          <h2>Chrome CLI / CDP</h2>
+          <p>默认接入：127.0.0.1:9222</p>
+          <div class="mini-grid">
+            <span id="pptx-ready">PPTX：检测中</span>
+            <span id="search-provider">搜索：待检测</span>
+          </div>
+        </div>
+      </aside>
+
+      <section class="workbench" aria-live="polite">
+        <nav class="tabs" aria-label="工作台标签">
+          <button class="tab is-active" type="button" data-tab="workflow">工作流</button>
+          <button class="tab" type="button" data-tab="search">检索结果</button>
+          <button class="tab" type="button" data-tab="chrome">Chrome CLI</button>
+          <button class="tab" type="button" data-tab="agent">Agent输出</button>
+          <button class="tab" type="button" data-tab="ppt">PPT输出</button>
+          <button class="tab" type="button" data-tab="tools">工具注册表</button>
+        </nav>
+
+        <section class="tab-panel is-active" data-panel="workflow">
+          <div class="panel-box">
+            <div class="panel-title">
+              <h2>运行状态</h2>
+              <span id="workflow-status">待启动</span>
+            </div>
+            <div id="status-strip" class="status-strip">
+              <div class="step is-active"><span>1</span><strong>检索</strong></div>
+              <div class="step"><span>2</span><strong>分析</strong></div>
+              <div class="step"><span>3</span><strong>成稿</strong></div>
+              <div class="step"><span>4</span><strong>导出</strong></div>
+            </div>
+            <div id="summary-list" class="summary-list">
+              <p class="empty-state">输入主题后可执行检索、分析并生成可下载 PPTX。</p>
+            </div>
+          </div>
+
+          <div class="panel-box">
+            <div class="panel-title">
+              <h2>PPT大纲</h2>
+              <span id="slide-count-label">0 页</span>
+            </div>
+            <div id="outline-list" class="outline-list"></div>
+          </div>
+        </section>
+
+        <section class="tab-panel" data-panel="search">
+          <div class="panel-box full-height">
+            <div class="panel-title">
+              <h2>检索结果</h2>
+              <span id="source-count-label">0 个来源</span>
+            </div>
+            <div id="source-list" class="source-list">
+              <p class="empty-state">点击“HTTP 检索”或“生成PPT + Loop QA”后显示来源。</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="tab-panel" data-panel="chrome">
+          <div class="panel-box">
+            <div class="panel-title">
+              <h2>Chrome启动命令</h2>
+              <span>remote debugging</span>
+            </div>
+            <pre class="terminal-block"><code>"C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --remote-allow-origins=* --user-data-dir="D:\chrome-debug-profile"
+
+WSL可用：
+"/mnt/c/Program Files/Google/Chrome/Application/chrome.exe" --remote-debugging-port=9222 --remote-allow-origins=* --user-data-dir="/mnt/d/chrome-debug-profile"</code></pre>
+          </div>
+          <div class="panel-box terminal-panel">
+            <pre id="chrome-log" class="terminal-block tall"><code>{
+  "status": "idle",
+  "webSocketDebuggerUrl": "ws://127.0.0.1:9222/devtools/page/..."
+}</code></pre>
+          </div>
+        </section>
+
+        <section class="tab-panel" data-panel="agent">
+          <div class="panel-box terminal-panel">
+            <div class="panel-title">
+              <h2>Agent输出</h2>
+              <span id="agent-status">idle</span>
+            </div>
+            <pre id="agent-log" class="terminal-block tall"><code>等待任务。</code></pre>
+          </div>
+        </section>
+
+        <section class="tab-panel" data-panel="ppt">
+          <div class="panel-box">
+            <div class="panel-title">
+              <h2>PPT输出</h2>
+              <span id="confidence-badge">待生成</span>
+            </div>
+            <div class="ppt-output">
+              <a id="download-link" class="download-link is-disabled" href="#" download>下载 PPTX</a>
+              <p id="ppt-meta">尚未生成文件。</p>
+            </div>
+          </div>
+          <div class="panel-box terminal-panel">
+            <pre id="ppt-log" class="terminal-block tall"><code>导出日志会显示在这里。</code></pre>
+          </div>
+        </section>
+
+        <section class="tab-panel" data-panel="tools">
+          <div class="panel-box full-height">
+            <div class="panel-title">
+              <h2>工具注册表</h2>
+              <span>runtime</span>
+            </div>
+            <div id="tool-registry" class="tool-registry">
+              <div><strong>HTTP检索</strong><span>未检测</span></div>
+              <div><strong>PPTX生成</strong><span>未检测</span></div>
+              <div><strong>模型增强</strong><span>可选 OPENAI_API_KEY</span></div>
+              <div><strong>材料上传</strong><span>本地后端</span></div>
+            </div>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <div id="toast" class="toast is-hidden" role="status"></div>
+    <script src="/app.js"></script>
+  </body>
+</html>

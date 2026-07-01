@@ -1,0 +1,33 @@
+你是专业研究型 Agent。请根据用户任务生成严谨的检索计划。
+
+用户任务：
+{task_title}
+
+研究领域：
+{domain}
+
+检索边界：
+{search_boundary}
+
+输出要求：
+1. 理解任务目标；
+2. 拆解核心问题；
+3. 生成中文、英文检索关键词；
+4. 生成论文检索式；
+5. 生成专利检索式；
+6. 生成产业信息检索式；
+7. 判断需要优先检索哪些来源；
+8. 输出 JSON。
+
+JSON 格式：
+{
+  "task_understanding": "",
+  "core_questions": [],
+  "cn_keywords": [],
+  "en_keywords": [],
+  "paper_queries": [],
+  "patent_queries": [],
+  "industry_queries": [],
+  "priority_sources": [],
+  "risk_points": []
+}

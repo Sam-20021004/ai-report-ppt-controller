@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>AI Report & PPT Agent Controller</title>
+    <link rel="stylesheet" href="./styles.css?v=phase15-hotfix">
+  </head>
+  <body>
+    <div class="app-shell">
+    <header class="topbar">
+      <div>
+        <h1>AI Report & PPT Agent Controller</h1>
+        <p>本机 Agent 控制台 · Local Mode</p>
+      </div>
+      <div class="topbar-side">
+        <div id="top-status" class="top-status">
+          <span>Backend · 检测中</span>
+          <span>Codex · 未检测</span>
+          <span>Hermes · 未检测</span>
+          <span>Chrome · 未检测</span>
+        </div>
+        <div class="top-actions">
+          <button id="top-settings" type="button">设置</button>
+          <button id="top-help" type="button">帮助</button>
+        </div>
+      </div>
+    </header>
+
+    <main class="main-layout">
+      <aside class="left-panel">
+        <form id="task-form" class="form-stack" autocomplete="off">
+          <section class="group card task-card">
+            <div class="group-title">
+              <h2>任务目标</h2>
+              <button id="clear-form" class="link-button" type="button">清空表单 / 新建任务</button>
+            </div>
+            <label class="field">
+              <span>任务标题 <b>*</b></span>
+              <input name="title" required placeholder="请输入任务标题，例如：GaN功率器件专利态势分析">
+            </label>
+            <div class="grid-2">
+              <label class="field">
+                <span>输出类型</span>
+                <select name="task_type" id="task-type">
+                  <option value="ppt">PPT</option>
+                  <option value="word">Word报告</option>
+                  <option value="ppt_word">PPT+Word</option>
+                  <option value="research_only">仅资料检索</option>
+                  <option value="outline_only">仅大纲生成</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>语言</span>
+                <select name="language">
+                  <option>中文</option>
+                  <option>英文</option>
+                  <option>中英双语</option>
+                </select>
+              </label>
+            </div>
+            <div class="grid-2">
+              <label class="field">
+                <span>研究领域</span>
+                <input name="domain" placeholder="请选择或输入研究领域">
+              </label>
+              <label class="field">
+                <span>目标受众</span>
+                <input name="audience" placeholder="例如：企业技术部门、投资人、政策部门">
+              </label>
+            </div>
+            <details class="advanced-title">
+              <summary>高级标题设置</summary>
+              <label class="field">
+                <span>PPT主题</span>
+                <input name="ppt_topic" placeholder="默认跟随任务标题">
+              </label>
+              <label class="field">
+                <span>Word报告标题</span>
+                <input name="word_topic" placeholder="默认跟随任务标题">
+              </label>
+            </details>
+          </section>
+
+          <section class="group card output-card">
+            <h2>输出配置</h2>
+            <div class="grid-2">
+              <label class="field ppt-only">
+                <span>PPT页数</span>
+                <input name="ppt_pages" type="number" min="5" max="80" placeholder="例如：20">
+              </label>
+              <label class="field word-only">
+                <span>Word字数</span>
+                <input name="word_target_words" type="number" min="1000" max="80000" placeholder="例如：8000">
+              </label>
+            </div>
+            <div class="upload-row ppt-only">
+              <input id="ppt-template" type="file" accept=".ppt,.pptx">
+              <button id="upload-ppt" type="button">上传PPT模板</button>
+            </div>
+            <div class="upload-row word-only">
+              <input id="word-template" type="file" accept=".doc,.docx">
+              <button id="upload-word" type="button">上传Word模板</button>
+            </div>
+            <div class="check-grid">
+              <label class="check-field"><input name="preserve_ppt_template" type="checkbox" checked><span>保留模板版式</span></label>
+              <label class="check-field"><input name="auto_charts" type="checkbox" checked><span>自动生成图表</span></label>
+              <label class="check-field"><input name="insert_citations" type="checkbox" checked><span>插入引用</span></label>
+              <label class="check-field"><input name="generate_speaker_notes" type="checkbox" checked><span>生成演讲稿</span></label>
+            </div>
+          </section>
+
+          <section class="group card search-card">
+            <h2>检索策略</h2>
+            <label class="field">
+              <span>关键词</span>
+              <input name="keywords" placeholder="输入关键词，多个关键词可用逗号分隔">
+            </label>
+            <div class="grid-2">
+              <label class="field"><span>地区</span><input name="region" placeholder="输入地区或市场范围"></label>
+              <label class="field"><span>时间范围</span><input name="time_range" placeholder="例如：近五年、2020-2026"></label>
+            </div>
+            <label class="field">
+              <span>数据库范围</span>
+              <input name="database_scope" placeholder="例如：公开网络、专利、论文、企业官网">
+            </label>
+            <label class="field">
+              <span>补充要求 / 检索边界</span>
+              <textarea name="search_boundary" rows="4" placeholder="请输入重点关注方向、排除范围、数据源要求等"></textarea>
+            </label>
+            <div class="check-grid">
+              <label class="check-field"><input name="enable_web_search" type="checkbox" checked><span>公开网络</span></label>
+              <label class="check-field"><input name="enable_paper_search" type="checkbox"><span>论文</span></label>
+              <label class="check-field"><input name="enable_patent_search" type="checkbox"><span>专利</span></label>
+              <label class="check-field"><input name="enable_industry_search" type="checkbox" checked><span>产业信息</span></label>
+            </div>
+          </section>
+
+          <details class="group card advanced-config advanced-card">
+            <summary>高级配置</summary>
+            <div class="grid-2">
+              <label class="field"><span>主 Agent</span><select name="main_agent"><option>auto</option><option>hermes</option><option>codex</option></select></label>
+              <label class="field"><span>审核 Agent</span><select name="review_agent"><option>auto</option><option>hermes</option><option>codex</option></select></label>
+            </div>
+            <label class="field"><span>循环次数</span><input name="loop_rounds" type="number" min="1" max="5" value="1"></label>
+            <div class="grid-2">
+              <label class="field"><span>Chrome CDP 端口</span><input value="127.0.0.1:9222" readonly></label>
+              <label class="field"><span>输出目录</span><input value="运行时生成" readonly></label>
+            </div>
+            <label class="field">
+              <span>章节结构</span>
+              <textarea name="user_outline" rows="5" placeholder="可选。请输入自定义章节结构，留空则由 Agent 生成。"></textarea>
+            </label>
+            <div class="check-grid">
+              <label class="check-field"><input name="enable_cross_review" type="checkbox" checked><span>多轮互审</span></label>
+              <label class="check-field"><input name="enable_fact_check" type="checkbox" checked><span>事实核查</span></label>
+              <label class="check-field"><input name="enable_format_check" type="checkbox" checked><span>格式审查</span></label>
+              <label class="check-field"><input name="enable_professional_review" type="checkbox" checked><span>专业审查</span></label>
+            </div>
+          </details>
+
+          <p id="form-error" class="error-text hidden"></p>
+          <div class="button-grid">
+            <button id="save-draft" class="secondary" type="button">保存草稿</button>
+            <button id="create-task" class="secondary" type="button">创建任务</button>
+          </div>
+          <button id="run-task" class="primary" type="button">开始运行 Multi-agent 工作流</button>
+        </form>
+      </aside>
+
+      <section class="center-panel workspace-card">
+        <nav class="tabs">
+          <button class="tab tab-button active" data-tab="workflow">工作流</button>
+          <button class="tab tab-button" data-tab="search">检索结果</button>
+          <button class="tab tab-button" data-tab="agent">Agent 输出</button>
+          <button class="tab tab-button" data-tab="ppt">PPT 输出</button>
+          <button class="tab tab-button" data-tab="word">Word 输出</button>
+          <button class="tab tab-button" data-tab="chrome">Chrome CLI</button>
+          <button class="tab tab-button" data-tab="system">系统日志</button>
+          <button class="tab tab-button" data-tab="tools">工具注册表</button>
+        </nav>
+
+        <section class="tab-panel active" data-panel="workflow">
+          <div class="panel-head">
+            <h2>工作流控制台</h2>
+            <span id="task-status">当前没有运行中的任务</span>
+          </div>
+          <div id="empty-workflow" class="empty-workflow workflow-empty">
+            <h3>当前没有运行中的任务</h3>
+            <p>请在左侧填写任务目标，或从下方选择示例任务。示例不会自动填入表单。</p>
+            <div class="button-row left">
+              <button id="new-blank" type="button">新建空白任务</button>
+              <button id="load-example" class="secondary" type="button">加载示例任务</button>
+              <button id="restore-draft" class="secondary hidden" type="button">恢复上次草稿</button>
+            </div>
+          </div>
+          <section class="workflow-preview">
+            <h3>标准 Multi-agent Loop</h3>
+            <ol>
+              <li>任务解析</li>
+              <li>Hermes 检索规划</li>
+              <li>Chrome CLI 联网搜索</li>
+              <li>Codex 生成大纲</li>
+              <li>Hermes 专业审核</li>
+              <li>Codex 修改</li>
+              <li>PPT / Word 文件生成</li>
+              <li>最终质检</li>
+            </ol>
+          </section>
+          <div id="workflow" class="timeline"></div>
+          <section class="example-zone">
+            <h3>示例任务</h3>
+            <div class="example-grid">
+              <button class="example-card" type="button" data-example="patent">专利态势分析</button>
+              <button class="example-card" type="button" data-example="paper">论文分享PPT</button>
+              <button class="example-card" type="button" data-example="industry">产业链分析</button>
+              <button class="example-card" type="button" data-example="fto">FTO风险分析</button>
+            </div>
+          </section>
+          <section class="recent-zone">
+            <h3>最近任务</h3>
+            <div id="recent-tasks" class="recent-list">暂无最近任务</div>
+          </section>
+        </section>
+
+        <section class="tab-panel" data-panel="search">
+          <div class="panel-head"><h2>检索结果</h2><span>sources.json</span></div>
+          <pre id="search-output" class="terminal terminal-log">运行工作流后显示检索计划或检索结果。</pre>
+        </section>
+
+        <section class="tab-panel" data-panel="agent">
+          <div class="panel-head"><h2>Agent 输出</h2><span>Codex / Hermes</span></div>
+          <pre id="agent-output" class="terminal terminal-log agent-output tall">等待连接检测或任务运行。</pre>
+        </section>
+
+        <section class="tab-panel" data-panel="ppt">
+          <div class="panel-head"><h2>PPT 输出</h2><span>Phase 3</span></div>
+          <pre class="terminal terminal-log tall">运行到文件生成阶段后显示 PPTX 输出。</pre>
+        </section>
+
+        <section class="tab-panel" data-panel="word">
+          <div class="panel-head"><h2>Word 输出</h2><span>Phase 3</span></div>
+          <pre class="terminal terminal-log tall">运行到文件生成阶段后显示 DOCX 输出。</pre>
+        </section>
+
+        <section class="tab-panel" data-panel="chrome">
+          <div class="panel-head"><h2>Chrome CLI / CDP</h2><button id="check-chrome" type="button">检测 Chrome</button></div>
+          <pre class="terminal terminal-log compact">"C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --remote-allow-origins=* --user-data-dir="D:\chrome-debug-profile"</pre>
+          <pre id="chrome-output" class="terminal terminal-log tall">等待检测。</pre>
+        </section>
+
+        <section class="tab-panel" data-panel="system">
+          <div class="panel-head"><h2>系统日志</h2><span>轮询 fallback</span></div>
+          <pre id="system-log" class="terminal terminal-log tall">APP 已加载。</pre>
+        </section>
+
+        <section class="tab-panel" data-panel="tools">
+          <div class="panel-head"><h2>工具注册表</h2><span>白名单封装</span></div>
+          <div id="tool-registry" class="registry"></div>
+        </section>
+      </section>
+
+      <aside class="right-panel">
+        <section class="card status-card">
+          <div class="card-head">
+            <h2>系统状态</h2>
+            <button id="check-all" type="button">检测全部</button>
+          </div>
+          <div id="connection-status" class="status-list"></div>
+        </section>
+        <section class="card status-card precheck-card">
+          <h2>运行前检查</h2>
+          <div id="preflight-list" class="status-list"></div>
+        </section>
+        <section class="card status-card current-task-card">
+          <h2>当前任务</h2>
+          <p id="current-task">暂无任务</p>
+          <div id="task-actions" class="button-grid hidden">
+            <button id="refresh-task" type="button">刷新</button>
+            <button id="pause-task" type="button">暂停</button>
+            <button id="cancel-task" type="button">取消</button>
+            <button id="rerun-step" type="button">重跑Step 1</button>
+          </div>
+        </section>
+        <section class="card status-card files-card">
+          <h2>输出文件</h2>
+          <div id="file-list" class="file-list">暂无生成文件</div>
+        </section>
+        <section class="card status-card quick-actions-card">
+          <h2>快捷操作</h2>
+          <div class="button-grid">
+            <button id="right-new-task" type="button">新建任务</button>
+            <button id="right-save-draft" type="button">保存草稿</button>
+            <button id="right-restore-draft" class="hidden" type="button">恢复草稿</button>
+            <button id="right-load-example" type="button">加载示例</button>
+            <button id="load-config" type="button">读取配置</button>
+          </div>
+        </section>
+      </aside>
+    </main>
+
+    <div id="toast" class="toast hidden"></div>
+    </div>
+    <script src="./app.js?v=phase15-hotfix" defer></script>
+  </body>
+</html>
