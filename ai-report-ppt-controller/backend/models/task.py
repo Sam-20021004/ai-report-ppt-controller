@@ -71,6 +71,10 @@ class TaskRecord(BaseModel):
     review_round: int = 0
     generated_files: list[dict] = Field(default_factory=list)
     final_quality_check: dict = Field(default_factory=dict)
+    phase2_inputs: dict = Field(default_factory=dict)
+    phase2_outputs_summary: dict = Field(default_factory=dict)
+    phase2_errors: list[dict] = Field(default_factory=list)
+    phase2_files: list[dict] = Field(default_factory=list)
 
 
 WORKFLOW_STEPS = [

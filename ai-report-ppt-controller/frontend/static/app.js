@@ -413,7 +413,11 @@ function renderTask(record) {
     `;
     workflow.appendChild(row);
   });
-  searchOutput.textContent = JSON.stringify(record.steps[2]?.output || { status: "pending" }, null, 2);
+  searchOutput.textContent = JSON.stringify({
+    phase2_outputs_summary: record.phase2_outputs_summary || {},
+    phase2_errors: record.phase2_errors || [],
+    research_step: record.steps[2]?.output || { status: "pending" },
+  }, null, 2);
   loadFiles();
 }
 
@@ -472,7 +476,13 @@ function renderFiles(files) {
     return;
   }
   fileList.innerHTML = files.map((file) => `
-    <div class="file-item"><a href="/api/download/${escapeAttr(file.file_id)}">${escapeHtml(file.file_name)}</a><span>${Math.ceil(file.size / 1024)} KB</span></div>
+    <div class="file-item ${file.is_phase2_artifact ? "phase2-file" : ""}">
+      <div class="file-main">
+        <a href="/api/download/${escapeAttr(file.file_id)}">${escapeHtml(file.file_name)}</a>
+        <span class="file-meta">${escapeHtml(file.description || file.relative_path || file.file_type || "")}</span>
+      </div>
+      <span>${Math.ceil(file.size / 1024)} KB</span>
+    </div>
   `).join("");
 }
 
@@ -587,5 +597,5 @@ function escapeHtml(value) {
 }
 
 function escapeAttr(value) {
-  return encodeURIComponent(String(value ?? ""));
+  return String(value ?? "").split("/").map(encodeURIComponent).join("/");
 }

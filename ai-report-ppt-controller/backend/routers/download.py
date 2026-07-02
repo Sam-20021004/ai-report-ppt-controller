@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import urllib.parse
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -13,6 +14,7 @@ router = APIRouter(prefix="/api/download", tags=["download"])
 
 @router.get("/{file_id:path}", dependencies=[Depends(require_api_token)])
 def download(file_id: str):
+    file_id = urllib.parse.unquote(file_id)
     path = safe_join(STORAGE_DIR, file_id)
     if not path.exists() or not path.is_file():
         raise HTTPException(status_code=404, detail="File not found.")

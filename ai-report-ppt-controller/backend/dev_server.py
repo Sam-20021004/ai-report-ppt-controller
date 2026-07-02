@@ -8,6 +8,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime
 from http import HTTPStatus
@@ -366,6 +367,11 @@ class Handler(BaseHTTPRequestHandler):
                     "hermes_check": True,
                 },
             })
+        if path == "/favicon.ico":
+            self.send_response(204)
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            return
         if path == "/api/config":
             config = load_config()
             config["api_token"] = "***" if config.get("api_token") else ""
@@ -382,7 +388,7 @@ class Handler(BaseHTTPRequestHandler):
                 files = workflow_list_task_files(task_id)
                 return json_response(self, 200, {"task_id": task_id, "files": files})
         if path.startswith("/api/download/"):
-            file_id = path.replace("/api/download/", "", 1)
+            file_id = urllib.parse.unquote(path.replace("/api/download/", "", 1))
             target = safe_join(STORAGE_ROOT, file_id)
             if not target.exists() or not target.is_file():
                 return json_response(self, 404, {"error": "File not found."})

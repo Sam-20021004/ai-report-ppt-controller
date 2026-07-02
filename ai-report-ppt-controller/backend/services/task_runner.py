@@ -9,7 +9,9 @@ from typing import Any
 
 from backend.config import STORAGE_DIR, get_settings
 from backend.models.task import TaskRecord, TaskRequest, default_steps
-from backend.services.agent_adapters import MockChromeAdapter, make_codex_adapter, make_hermes_adapter, write_json
+from backend.services.agent_adapters import make_codex_adapter, make_hermes_adapter, write_json
+from backend.services.phase2_artifacts import execute_phase2_search_plan, summarize_phase2_research, write_phase2_contract_artifacts
+from backend.services.phase2_records import build_file_metadata, sort_task_files
 from backend.services.security import HTTPException, safe_join
 
 
@@ -35,10 +37,6 @@ def task_yaml_path(task_id: str) -> Path:
 
 def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
-
-
-def _relative_to_storage(path: Path) -> str:
-    return path.resolve().relative_to(STORAGE_DIR.resolve()).as_posix()
 
 
 def _write_text(path: Path, content: str) -> None:
@@ -141,15 +139,8 @@ def list_task_files(task_id: str) -> list[dict]:
     files = []
     for file_path in directory.rglob("*"):
         if file_path.is_file():
-            files.append(
-                {
-                    "file_id": _relative_to_storage(file_path),
-                    "file_name": file_path.name,
-                    "path": str(file_path),
-                    "size": file_path.stat().st_size,
-                }
-            )
-    return files
+            files.append(build_file_metadata(task_id, file_path, STORAGE_DIR, directory))
+    return sort_task_files(files)
 
 
 def _generated_output_files(task_id: str) -> list[dict]:
@@ -157,17 +148,7 @@ def _generated_output_files(task_id: str) -> list[dict]:
     files = []
     for file_path in (workspace / "output").glob("*"):
         if file_path.is_file():
-            files.append(
-                {
-                    "file_id": _relative_to_storage(file_path),
-                    "task_id": task_id,
-                    "file_name": file_path.name,
-                    "file_type": file_path.suffix.lstrip(".") or "file",
-                    "path": str(file_path),
-                    "size": file_path.stat().st_size,
-                    "created_at": _now(),
-                }
-            )
+            files.append(build_file_metadata(task_id, file_path, STORAGE_DIR, workspace))
     return files
 
 
@@ -329,7 +310,6 @@ def run_workflow(task_id: str) -> TaskRecord:
 
     hermes = make_hermes_adapter(settings)
     codex = make_codex_adapter(settings)
-    chrome = MockChromeAdapter()
     base_context = {"request": request.model_dump()}
 
     _mark_step(
@@ -353,6 +333,18 @@ def run_workflow(task_id: str) -> TaskRecord:
         raise RuntimeError(planner_result.get("error") or "Hermes planner failed.")
     planner = planner_result.get("result", {})
     _write_planner_artifacts(workspace, planner)
+    phase2_contract = write_phase2_contract_artifacts(record, workspace, STORAGE_DIR, task_dir(record.task_id))
+    record.steps[1].output_summary = "Planner artifacts and structured Phase 2 search plan generated."
+    record.steps[1].output = {
+        "planner_result": planner_result,
+        "phase2_contract": {
+            "files": [item["file_name"] for item in phase2_contract["phase2_files"]],
+            "query_count": len(phase2_contract["search_plan"].get("queries") or []),
+            "source_count": len(phase2_contract["sources"].get("items") or []),
+            "fallback_used": bool(phase2_contract["search_plan"].get("diagnostics", {}).get("fallback_used")),
+        },
+    }
+    save_record(record)
 
     if request.task_type == "outline_only":
         for index in range(3, 9):
@@ -366,17 +358,22 @@ def run_workflow(task_id: str) -> TaskRecord:
         research_result = _run_step(
             record,
             3,
-            lambda: chrome.run_task("search", "Search from research/search_queries.json", workspace, base_context),
-            "Browser/Chrome Adapter 已生成 sources.json。",
+            lambda: execute_phase2_search_plan(record, workspace, settings, STORAGE_DIR, task_dir(record.task_id)),
+            "Phase 2 web search executed; sources.json was updated with results or fallback diagnostics.",
         )
-        if research_result.get("status") != "success":
-            raise RuntimeError(research_result.get("error") or "Research step failed.")
     else:
-        write_json(workspace / "research" / "sources.json", [])
-        _skip_step(record, 3, "用户关闭联网搜索，已写入空 sources.json。")
+        research_result = write_phase2_contract_artifacts(record, workspace, STORAGE_DIR, task_dir(record.task_id))
+        _skip_step(record, 3, "Web search disabled; structured Phase 2 search plan files were generated.")
 
+    planner_errors = research_result.get("planner_errors") or []
     if request.task_type == "research_only":
-        for index in range(4, 9):
+        _run_step(
+            record,
+            4,
+            lambda: summarize_phase2_research(record, workspace, STORAGE_DIR, task_dir(record.task_id), planner_errors),
+            "Phase 2 research notes generated from sources.json.",
+        )
+        for index in range(5, 10):
             _skip_step(record, index, "仅资料检索任务已跳过文档生成步骤。")
         record.status = "done"
         record.generated_files = _generated_output_files(record.task_id)
@@ -385,16 +382,28 @@ def run_workflow(task_id: str) -> TaskRecord:
 
     writer_prompt = _writer_prompt(request)
     _write_text(workspace / "prompts" / "hermes_writer.md", writer_prompt)
-    writer_result = _run_step(
+
+    def _summarize_and_write() -> dict[str, Any]:
+        research_summary = summarize_phase2_research(record, workspace, STORAGE_DIR, task_dir(record.task_id), planner_errors)
+        writer = hermes.run_task("writer", writer_prompt, workspace, base_context)
+        if writer.get("status") != "success":
+            return writer
+        _write_writer_artifacts(workspace, writer.get("result", {}))
+        return {
+            "status": "success",
+            "research_summary": research_summary,
+            "writer_result": writer,
+        }
+
+    writer_output = _run_step(
         record,
         4,
-        lambda: hermes.run_task("writer", writer_prompt, workspace, base_context),
+        _summarize_and_write,
         "Hermes Writer 已生成 content.md、slides_storyboard.json 和 report_structure.json。",
     )
+    writer_result = writer_output.get("writer_result", {})
     if writer_result.get("status") != "success":
         raise RuntimeError(writer_result.get("error") or "Hermes writer failed.")
-    _write_writer_artifacts(workspace, writer_result.get("result", {}))
-
     builder_prompt = _codex_builder_prompt(request)
     _write_text(workspace / "prompts" / "codex_builder.md", builder_prompt)
     builder_result = _run_step(

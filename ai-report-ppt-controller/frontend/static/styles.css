@@ -611,6 +611,23 @@ button:disabled {
   font-weight: 700;
 }
 
+.file-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.file-meta {
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.file-item.phase2-file {
+  border-color: var(--line-strong);
+  background: var(--panel-soft);
+}
+
 .toast {
   position: fixed;
   left: 50%;
