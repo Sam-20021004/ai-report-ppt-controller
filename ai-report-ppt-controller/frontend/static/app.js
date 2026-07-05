@@ -69,6 +69,7 @@ const state = {
   taskId: null,
   health: null,
   checks: {},
+  pollTimer: null,
 };
 
 const form = document.querySelector("#task-form");
@@ -275,8 +276,10 @@ async function runTask() {
   try {
     const record = await api(`/api/task/${state.taskId}/run`, { method: "POST", body: "{}" });
     renderTask(record);
-    logSystem("工作流运行完成", record);
-    showToast("工作流已运行。");
+    rememberTask(record);
+    startTaskPolling();
+    logSystem("工作流已启动", record);
+    showToast("任务已启动，状态将自动刷新。");
   } finally {
     setBusy("#run-task", false);
   }
@@ -286,7 +289,40 @@ async function refreshTask() {
   if (!state.taskId) return showToast("尚未创建任务。");
   const record = await api(`/api/task/${state.taskId}`);
   renderTask(record);
+  rememberTask(record);
   await loadFiles();
+}
+
+function startTaskPolling() {
+  if (state.pollTimer) return;
+  state.pollTimer = window.setInterval(pollTaskStatus, 2000);
+  pollTaskStatus();
+}
+
+function stopTaskPolling() {
+  if (!state.pollTimer) return;
+  window.clearInterval(state.pollTimer);
+  state.pollTimer = null;
+}
+
+async function pollTaskStatus() {
+  if (!state.taskId) {
+    stopTaskPolling();
+    return;
+  }
+  try {
+    const record = await api(`/api/task/${state.taskId}`);
+    renderTask(record);
+    rememberTask(record);
+    if (!isRunningStatus(record.status)) {
+      stopTaskPolling();
+      await loadFiles();
+    }
+  } catch (error) {
+    stopTaskPolling();
+    logSystem("任务状态轮询失败", { error: error.message });
+    showToast("任务状态刷新失败，可手动刷新重试。");
+  }
 }
 
 async function taskAction(action, payload = {}) {
@@ -331,6 +367,7 @@ function restoreDraft() {
 function clearForm() {
   form.reset();
   state.taskId = null;
+  stopTaskPolling();
   document.querySelectorAll("[name='ppt_topic'], [name='word_topic']").forEach((input) => {
     input.dataset.userEdited = "";
     input.value = "";
@@ -380,6 +417,7 @@ function fillForm(values) {
 function clearWithoutToast() {
   form.reset();
   state.taskId = null;
+  stopTaskPolling();
   document.querySelectorAll("input[type='file']").forEach((input) => {
     input.value = "";
   });
@@ -418,7 +456,12 @@ function renderTask(record) {
     phase2_errors: record.phase2_errors || [],
     research_step: record.steps[2]?.output || { status: "pending" },
   }, null, 2);
-  loadFiles();
+  if (isRunningStatus(record.status)) {
+    startTaskPolling();
+  } else {
+    stopTaskPolling();
+  }
+  loadFiles().catch((error) => logSystem("文件列表刷新失败", { error: error.message }));
 }
 
 function renderEmptyWorkflow() {
@@ -567,6 +610,10 @@ function statusText(status) {
     skipped: "跳过",
     done: "完成",
   }[status] || status;
+}
+
+function isRunningStatus(status) {
+  return status === "running";
 }
 
 function showToast(message) {

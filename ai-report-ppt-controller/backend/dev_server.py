@@ -6,6 +6,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -35,6 +36,9 @@ from backend.services.task_runner import (
     save_record as workflow_save_record,
     update_task_status as workflow_update_task_status,
 )
+
+RUNNING_TASKS: dict[str, threading.Thread] = {}
+RUNNING_TASKS_LOCK = threading.Lock()
 
 WORKFLOW_STEPS = [
     ("连接检测", "system"),
@@ -114,12 +118,15 @@ def save_config(patch: dict) -> dict:
 
 def json_response(handler: BaseHTTPRequestHandler, status: int, payload: dict) -> None:
     body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
-    handler.send_response(status)
-    handler.send_header("Content-Type", "application/json; charset=utf-8")
-    handler.send_header("Cache-Control", "no-store")
-    handler.send_header("Content-Length", str(len(body)))
-    handler.end_headers()
-    handler.wfile.write(body)
+    try:
+        handler.send_response(status)
+        handler.send_header("Content-Type", "application/json; charset=utf-8")
+        handler.send_header("Cache-Control", "no-store")
+        handler.send_header("Content-Length", str(len(body)))
+        handler.end_headers()
+        handler.wfile.write(body)
+    except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError) as exc:
+        print(f"warning: client disconnected before response was sent: {handler.path} ({exc.__class__.__name__})")
 
 
 def read_json(handler: BaseHTTPRequestHandler) -> dict:
@@ -127,6 +134,52 @@ def read_json(handler: BaseHTTPRequestHandler) -> dict:
     if length == 0:
         return {}
     return json.loads(handler.rfile.read(length).decode("utf-8", errors="replace"))
+
+
+def _mark_background_failure(task_id: str, exc: Exception) -> None:
+    try:
+        record = workflow_load_record(task_id)
+        record.status = "failed"
+        if not any(step.status == "failed" for step in record.steps):
+            for step in record.steps:
+                if step.status in {"running", "waiting"}:
+                    step.status = "failed"
+                    step.ended_at = datetime.now().isoformat(timespec="seconds")
+                    step.output_summary = "Background workflow failed."
+                    step.error = str(exc)
+                    break
+        workflow_save_record(record)
+    except Exception as mark_exc:
+        print(f"warning: failed to persist background failure for task {task_id}: {mark_exc}")
+
+
+def _run_workflow_background(task_id: str) -> None:
+    try:
+        workflow_run_workflow(task_id)
+    except Exception as exc:
+        _mark_background_failure(task_id, exc)
+        print(f"warning: background workflow failed for task {task_id}: {exc}")
+    finally:
+        with RUNNING_TASKS_LOCK:
+            if RUNNING_TASKS.get(task_id) is threading.current_thread():
+                RUNNING_TASKS.pop(task_id, None)
+
+
+def start_workflow_background(task_id: str):
+    with RUNNING_TASKS_LOCK:
+        existing = RUNNING_TASKS.get(task_id)
+        if existing and existing.is_alive():
+            return workflow_load_record(task_id)
+        RUNNING_TASKS.pop(task_id, None)
+
+        record = workflow_load_record(task_id)
+        record.status = "running"
+        workflow_save_record(record)
+
+        thread = threading.Thread(target=_run_workflow_background, args=(task_id,), daemon=True, name=f"task-{task_id[:8]}")
+        RUNNING_TASKS[task_id] = thread
+        thread.start()
+        return record
 
 
 def safe_join(base: Path, relative: str) -> Path:
@@ -420,7 +473,7 @@ class Handler(BaseHTTPRequestHandler):
             task_id = parts[2]
             action = parts[3] if len(parts) > 3 else ""
             if action == "run":
-                return json_response(self, 200, workflow_run_workflow(task_id).model_dump())
+                return json_response(self, 200, start_workflow_background(task_id).model_dump())
             record = workflow_load_record(task_id)
             if action == "pause":
                 return json_response(self, 200, workflow_update_task_status(task_id, "paused").model_dump())
