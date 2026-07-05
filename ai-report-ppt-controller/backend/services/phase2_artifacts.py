@@ -6,7 +6,7 @@ from typing import Any
 from backend.services.agent_adapters import read_json, write_json
 from backend.services.phase2_records import collect_phase2_files, update_phase2_record
 from backend.services.phase2_utils import clean_text, language_code, now, output_type, split_terms, unique_items
-from backend.services.research_summarizer import summarize_research_sources
+from backend.services.research_summarizer import enhance_sources_audit, summarize_research_sources
 from backend.services.web_search import execute_search_plan as execute_web_search_plan
 from backend.services.web_search import fallback_sources
 
@@ -449,6 +449,7 @@ def write_phase2_contract_artifacts(record: Any, workspace: Path, storage_dir: P
     research_dir = workspace / "research"
     search_plan_path = research_dir / "search_plan.json"
     sources_path = research_dir / "sources.json"
+    sources = enhance_sources_audit(search_plan, sources)
     write_json(search_plan_path, search_plan)
     write_json(sources_path, sources)
 
@@ -528,6 +529,7 @@ def execute_phase2_search_plan(record: Any, workspace: Path, settings: Any, stor
         warnings = sources.setdefault("diagnostics", {}).setdefault("warnings", [])
         warnings.extend(item["message"] for item in planner_errors)
 
+    sources = enhance_sources_audit(search_plan, sources)
     write_json(sources_path, sources)
 
     phase2_files = collect_phase2_files(record.task_id, research_dir, storage_dir, task_root)
@@ -580,6 +582,8 @@ def summarize_phase2_research(
         "source_count": (result.get("research_notes") or {}).get("source_count", 0),
         "executed_query_count": (result.get("research_notes") or {}).get("executed_query_count", 0),
         "preliminary_note_count": (result.get("research_notes") or {}).get("preliminary_note_count", 0),
+        "audit_summary": (result.get("research_notes") or {}).get("audit_summary", {}),
+        "coverage": (result.get("research_notes") or {}).get("coverage", []),
         "error_count": len(result.get("errors") or []),
         "phase2_files": phase2_files,
     }

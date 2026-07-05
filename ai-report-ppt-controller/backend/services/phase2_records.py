@@ -9,10 +9,10 @@ from backend.services.research_summarizer import SCHEMA_VERSION as RESEARCH_NOTE
 
 
 PHASE2_RESEARCH_ARTIFACTS = {
-    "research/search_plan.json": "Phase 2 search plan with query strategy and source selection policy.",
-    "research/sources.json": "Phase 2 candidate source list captured by search execution.",
-    "research/research_notes.md": "Phase 2 readable research notes summarized from candidate sources.",
-    "research/research_notes.json": "Phase 2 structured research notes summarized from candidate sources.",
+    "research/search_plan.json": "检索计划",
+    "research/sources.json": "真实搜索候选来源与审计信息",
+    "research/research_notes.md": "人工核查用资料整理",
+    "research/research_notes.json": "结构化研究备注与质量摘要",
 }
 
 
@@ -90,7 +90,10 @@ def update_phase2_record(
     source_diagnostics = sources.get("diagnostics") or {}
     source_fallback = sources.get("fallback") or {}
     source_errors = sources.get("errors") or []
+    source_quality = sources.get("source_quality_summary") or {}
+    domains_summary = sources.get("domains_summary") or {}
     summary_payload = (research_summary or {}).get("research_notes") or {}
+    audit_summary = summary_payload.get("audit_summary") or {}
     summary_errors = (research_summary or {}).get("errors") or []
     planner_fallback_used = bool(planner_diagnostics.get("fallback_used"))
     search_fallback_used = bool(source_fallback.get("used"))
@@ -132,6 +135,16 @@ def update_phase2_record(
         "search_fallback_used": search_fallback_used,
         "fallback_used": planner_fallback_used or search_fallback_used,
         "source_execution": source_executor,
+        "quality_summary": {
+            "sources_count": len(sources.get("items") or []),
+            "unique_domains": domains_summary.get("unique_domain_count", audit_summary.get("unique_domain_count", 0)),
+            "failed_queries": len(sources.get("failed_queries") or []),
+            "manual_review_required_count": source_quality.get(
+                "manual_review_required_count",
+                audit_summary.get("manual_review_required_count", 0),
+            ),
+            "fallback_used": planner_fallback_used or search_fallback_used,
+        },
         "research_notes": {
             "status": (research_summary or {}).get("status"),
             "file": (research_summary or {}).get("research_notes_file"),
@@ -139,6 +152,7 @@ def update_phase2_record(
             "source_count": summary_payload.get("source_count"),
             "executed_query_count": summary_payload.get("executed_query_count"),
             "preliminary_note_count": summary_payload.get("preliminary_note_count"),
+            "manual_review_required_count": audit_summary.get("manual_review_required_count"),
             "retrieved_at": summary_payload.get("retrieved_at"),
             "generated_at": summary_payload.get("generated_at"),
         }
