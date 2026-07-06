@@ -85,6 +85,7 @@ const preflightList = document.querySelector("#preflight-list");
 const currentTask = document.querySelector("#current-task");
 const taskActions = document.querySelector("#task-actions");
 const fileList = document.querySelector("#file-list");
+let phase2Audit = document.querySelector("#phase2-audit");
 const toolRegistry = document.querySelector("#tool-registry");
 const topStatus = document.querySelector("#top-status");
 const toast = document.querySelector("#toast");
@@ -136,6 +137,8 @@ document.querySelectorAll("[name='ppt_topic'], [name='word_topic']").forEach((in
 init();
 
 async function init() {
+  ensureAuditPanel();
+  renderPhase2AuditUnavailable("运行研究任务后显示审计信息。");
   renderEmptyWorkflow();
   updateOutputVisibility();
   updateDraftButton();
@@ -340,6 +343,15 @@ async function loadFiles() {
   renderFiles(data.files || []);
 }
 
+async function loadPhase2Audit() {
+  if (!state.taskId) {
+    renderPhase2AuditUnavailable("运行研究任务后显示审计信息。");
+    return;
+  }
+  const data = await api(`/api/task/${state.taskId}/phase2/audit`);
+  renderPhase2Audit(data);
+}
+
 async function uploadFile(inputId, endpoint) {
   const input = document.querySelector(`#${inputId}`);
   if (!input.files.length) return showToast("请先选择文件。");
@@ -382,6 +394,7 @@ function clearForm() {
   currentTask.textContent = "暂无任务";
   taskActions.classList.add("hidden");
   fileList.textContent = "暂无生成文件";
+  renderPhase2AuditUnavailable("运行研究任务后显示审计信息。");
   searchOutput.textContent = "运行工作流后显示检索计划或检索结果。";
   agentOutput.textContent = "等待连接检测或任务运行。";
   renderEmptyWorkflow();
@@ -429,6 +442,7 @@ function clearWithoutToast() {
   currentTask.textContent = "暂无任务";
   taskActions.classList.add("hidden");
   fileList.textContent = "暂无生成文件";
+  renderPhase2AuditUnavailable("运行研究任务后显示审计信息。");
   renderEmptyWorkflow();
 }
 
@@ -462,6 +476,10 @@ function renderTask(record) {
     stopTaskPolling();
   }
   loadFiles().catch((error) => logSystem("文件列表刷新失败", { error: error.message }));
+  loadPhase2Audit().catch((error) => {
+    renderPhase2AuditUnavailable("审计信息暂不可用。", [error.message]);
+    logSystem("Phase 2 审计信息刷新失败", { error: error.message });
+  });
 }
 
 function renderEmptyWorkflow() {
@@ -511,6 +529,150 @@ function renderRegistry() {
     ["Remote Access Auth", "本机模式默认开启，远程需 token"],
   ];
   toolRegistry.innerHTML = rows.map(([name, status]) => `<div class="registry-item"><strong>${name}</strong><span>${escapeHtml(status)}</span></div>`).join("");
+}
+
+function ensureAuditPanel() {
+  if (phase2Audit) return;
+  const filesCard = document.querySelector(".files-card");
+  if (!filesCard) return;
+  const section = document.createElement("section");
+  section.className = "card status-card audit-card";
+  section.innerHTML = `
+    <h2>资料审计 / 人工核查</h2>
+    <div id="phase2-audit" class="phase2-audit"></div>
+  `;
+  filesCard.insertAdjacentElement("afterend", section);
+  phase2Audit = section.querySelector("#phase2-audit");
+}
+
+function renderPhase2AuditUnavailable(message, warnings = []) {
+  ensureAuditPanel();
+  if (!phase2Audit) return;
+  const warningList = Array.isArray(warnings) ? warnings.filter(Boolean) : [];
+  phase2Audit.innerHTML = `
+    <p class="audit-disclaimer">注意：以下审计信息用于辅助人工核查，不代表事实核验结论。请以原始来源和人工判断为准。</p>
+    <p class="audit-empty">${escapeHtml(message || "审计信息暂不可用。")}</p>
+    ${renderAuditWarnings(warningList)}
+  `;
+}
+
+function renderPhase2Audit(data) {
+  ensureAuditPanel();
+  if (!phase2Audit) return;
+  const warnings = Array.isArray(data?.warnings) ? data.warnings.filter(Boolean) : [];
+  if (!data || !data.available) {
+    renderPhase2AuditUnavailable("审计信息暂不可用。", warnings);
+    return;
+  }
+  const metrics = [
+    ["fallback_used", formatAuditBoolean(data.fallback_used)],
+    ["source_count", data.source_count ?? 0],
+    ["real_url_count", data.real_url_count ?? 0],
+    ["manual_review_count", data.manual_review_count ?? 0],
+  ];
+  phase2Audit.innerHTML = `
+    <p class="audit-disclaimer">注意：以下审计信息用于辅助人工核查，不代表事实核验结论。请以原始来源和人工判断为准。</p>
+    <div class="audit-metrics">
+      ${metrics.map(([label, value]) => `
+        <div class="audit-metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>
+      `).join("")}
+    </div>
+    <section class="audit-section">
+      <h3>source_quality_summary</h3>
+      ${renderAuditKeyValues(data.source_quality_summary, "暂无来源质量摘要")}
+    </section>
+    <section class="audit-section">
+      <h3>audit_summary</h3>
+      ${renderAuditKeyValues(data.audit_summary, "暂无审计摘要")}
+    </section>
+    <section class="audit-section">
+      <h3>coverage</h3>
+      ${renderCoverage(data.coverage)}
+    </section>
+    <section class="audit-section">
+      <h3>manual_review_checklist</h3>
+      ${renderAuditList(data.manual_review_checklist, "暂无人工核查清单")}
+    </section>
+    <section class="audit-section">
+      <h3>候选来源人工核查</h3>
+      ${renderAuditSources(data.sources)}
+    </section>
+    ${renderAuditWarnings(warnings)}
+  `;
+}
+
+function renderAuditKeyValues(value, emptyText) {
+  const object = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const entries = Object.entries(object).filter(([, item]) => item !== undefined && item !== null && item !== "");
+  if (!entries.length) return `<p class="audit-empty">${escapeHtml(emptyText)}</p>`;
+  return `
+    <dl class="audit-kv">
+      ${entries.map(([key, item]) => `
+        <div><dt>${escapeHtml(key)}</dt><dd>${escapeHtml(formatAuditValue(item))}</dd></div>
+      `).join("")}
+    </dl>
+  `;
+}
+
+function renderCoverage(value) {
+  const items = Array.isArray(value) ? value : [];
+  if (!items.length) return `<p class="audit-empty">暂无覆盖摘要</p>`;
+  return `
+    <ul class="audit-list">
+      ${items.map((item) => {
+        if (!item || typeof item !== "object") return `<li>${escapeHtml(item)}</li>`;
+        const queryId = item.query_id || item.id || "unknown";
+        const sourceCount = item.candidate_source_count ?? item.source_count ?? 0;
+        const found = item.has_candidate_sources ? "有候选来源" : "未找到候选来源";
+        const failed = item.failed ? "；存在失败或需复查" : "";
+        return `<li><strong>${escapeHtml(queryId)}</strong>：${escapeHtml(found)}；source_count=${escapeHtml(sourceCount)}${escapeHtml(failed)}</li>`;
+      }).join("")}
+    </ul>
+  `;
+}
+
+function renderAuditList(value, emptyText) {
+  const items = Array.isArray(value) ? value.filter(Boolean) : [];
+  if (!items.length) return `<p class="audit-empty">${escapeHtml(emptyText)}</p>`;
+  return `<ul class="audit-list">${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
+}
+
+function renderAuditSources(value) {
+  const sources = Array.isArray(value) ? value : [];
+  if (!sources.length) return `<p class="audit-empty">暂无候选来源</p>`;
+  return `
+    <div class="audit-source-list">
+      ${sources.map((source) => renderAuditSource(source)).join("")}
+    </div>
+  `;
+}
+
+function renderAuditSource(source) {
+  const item = source && typeof source === "object" ? source : {};
+  const flags = Array.isArray(item.audit_flags) ? item.audit_flags.filter(Boolean) : [];
+  const url = safeExternalUrl(item.url || item.normalized_url);
+  const title = item.title || item.normalized_url || item.url || "(missing title)";
+  const flagHtml = flags.length
+    ? flags.map((flag) => `<span>${escapeHtml(flag)}</span>`).join("")
+    : `<span class="audit-flag-muted">无明显审计标记</span>`;
+  return `
+    <article class="audit-source ${item.needs_manual_review ? "needs-review" : ""}">
+      <div class="audit-source-head">
+        <strong>${escapeHtml(item.source_id || "source")}</strong>
+        <span class="badge ${item.needs_manual_review ? "needs_review" : "success"}">needs_manual_review=${item.needs_manual_review ? "true" : "false"}</span>
+      </div>
+      ${url
+        ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(title)}</a>`
+        : `<span class="audit-source-title">${escapeHtml(title)}</span>`}
+      <span class="audit-domain">${escapeHtml(item.domain || item.normalized_url || item.url || "unknown domain")}</span>
+      <div class="audit-flags">${flagHtml}</div>
+    </article>
+  `;
+}
+
+function renderAuditWarnings(warnings) {
+  if (!warnings.length) return "";
+  return `<div class="audit-warning">${warnings.map((item) => `<p>${escapeHtml(item)}</p>`).join("")}</div>`;
 }
 
 function renderFiles(files) {
@@ -625,6 +787,26 @@ function showToast(message) {
 
 function trimValue(value) {
   return String(value || "").trim();
+}
+
+function formatAuditBoolean(value) {
+  if (value === null || value === undefined) return "未知";
+  return value ? "true / 是" : "false / 否";
+}
+
+function formatAuditValue(value) {
+  if (typeof value === "boolean") return formatAuditBoolean(value);
+  if (Array.isArray(value)) {
+    if (!value.length) return "[]";
+    return value.every((item) => typeof item !== "object") ? value.join(", ") : JSON.stringify(value);
+  }
+  if (value && typeof value === "object") return JSON.stringify(value);
+  return String(value ?? "");
+}
+
+function safeExternalUrl(value) {
+  const text = String(value || "").trim();
+  return /^https?:\/\//i.test(text) ? text : "";
 }
 
 function numberOrNull(value) {

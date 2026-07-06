@@ -628,6 +628,160 @@ button:disabled {
   background: var(--panel-soft);
 }
 
+.phase2-audit {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.audit-disclaimer,
+.audit-empty,
+.audit-warning p,
+.audit-domain,
+.audit-flags {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.audit-disclaimer {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel-soft);
+  padding: 8px;
+}
+
+.audit-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.audit-metric {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+  padding: 8px;
+}
+
+.audit-metric span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.audit-metric strong {
+  display: block;
+  margin-top: 3px;
+  overflow-wrap: anywhere;
+}
+
+.audit-section {
+  display: grid;
+  gap: 6px;
+}
+
+.audit-section h3 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.audit-kv {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+.audit-kv div {
+  display: grid;
+  grid-template-columns: minmax(78px, 0.8fr) minmax(0, 1.2fr);
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+  padding: 6px 8px;
+}
+
+.audit-kv dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.audit-kv dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.audit-list {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.audit-source-list {
+  display: grid;
+  gap: 8px;
+  max-height: 420px;
+  overflow: auto;
+}
+
+.audit-source {
+  display: grid;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+  padding: 8px;
+}
+
+.audit-source.needs-review {
+  border-color: #efc36b;
+  background: #fffaf0;
+}
+
+.audit-source-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.audit-source a,
+.audit-source-title {
+  color: var(--blue);
+  font-weight: 700;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.audit-flags {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.audit-flags span {
+  border-radius: 999px;
+  background: var(--blue-soft);
+  color: var(--blue-dark);
+  padding: 2px 6px;
+}
+
+.audit-flags .audit-flag-muted {
+  background: var(--panel-soft);
+  color: var(--muted);
+}
+
+.audit-warning {
+  display: grid;
+  gap: 4px;
+  border-left: 3px solid var(--orange);
+  padding-left: 8px;
+}
+
 .toast {
   position: fixed;
   left: 50%;
@@ -682,6 +836,8 @@ button:disabled {
 
   .step-row,
   .grid-2,
+  .audit-metrics,
+  .audit-kv div,
   .button-grid,
   .example-grid,
   .workflow-preview ol,

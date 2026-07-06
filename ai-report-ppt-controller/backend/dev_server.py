@@ -28,12 +28,14 @@ DEFAULT_PORT = int(os.getenv("APP_PORT", "7860"))
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from backend.models.task import TaskRequest
+from backend.services.phase2_artifacts import build_phase2_audit_review
 from backend.services.task_runner import (
     create_task as workflow_create_task,
     list_task_files as workflow_list_task_files,
     load_record as workflow_load_record,
     run_workflow as workflow_run_workflow,
     save_record as workflow_save_record,
+    task_dir as workflow_task_dir,
     update_task_status as workflow_update_task_status,
 )
 
@@ -440,6 +442,8 @@ class Handler(BaseHTTPRequestHandler):
             if parts[3] == "files":
                 files = workflow_list_task_files(task_id)
                 return json_response(self, 200, {"task_id": task_id, "files": files})
+            if len(parts) >= 5 and parts[3] == "phase2" and parts[4] == "audit":
+                return json_response(self, 200, build_phase2_audit_review(task_id, workflow_task_dir(task_id)))
         if path.startswith("/api/download/"):
             file_id = urllib.parse.unquote(path.replace("/api/download/", "", 1))
             target = safe_join(STORAGE_ROOT, file_id)

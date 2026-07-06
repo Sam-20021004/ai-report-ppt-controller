@@ -11,6 +11,12 @@ from backend.services.web_search import execute_search_plan as execute_web_searc
 from backend.services.web_search import fallback_sources
 
 
+PHASE2_AUDIT_DISCLAIMER = (
+    "Audit information is provided to assist human review. It is derived from "
+    "search result metadata and does not represent fact verification conclusions."
+)
+
+
 def _strategy_flags(request: Any, source_scope: list[str]) -> dict[str, Any]:
     return {
         "web_search": bool(request.enable_web_search),
@@ -587,3 +593,129 @@ def summarize_phase2_research(
         "error_count": len(result.get("errors") or []),
         "phase2_files": phase2_files,
     }
+
+
+def _audit_empty_payload(task_id: str, warnings: list[str]) -> dict[str, Any]:
+    return {
+        "available": False,
+        "task_id": task_id,
+        "fallback_used": None,
+        "source_count": 0,
+        "real_url_count": 0,
+        "manual_review_count": 0,
+        "quality": {},
+        "source_quality_summary": {},
+        "audit_summary": {},
+        "coverage": [],
+        "manual_review_checklist": [],
+        "sources": [],
+        "warnings": warnings,
+        "disclaimer": PHASE2_AUDIT_DISCLAIMER,
+    }
+
+
+def _read_audit_json(path: Path, label: str, warnings: list[str]) -> dict[str, Any] | None:
+    if not path.exists():
+        warnings.append(f"{label} is missing.")
+        return None
+    try:
+        data = read_json(path, {})
+    except Exception as exc:
+        warnings.append(f"{label} could not be parsed: {exc}")
+        return None
+    if not isinstance(data, dict):
+        warnings.append(f"{label} is not a JSON object.")
+        return None
+    return data
+
+
+def _dict_or_empty(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _list_or_empty(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def _bool_from_metadata(value: Any) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y"}
+    return bool(value) if value is not None else False
+
+
+def _is_real_url(value: Any) -> bool:
+    return str(value or "").strip().lower().startswith(("http://", "https://"))
+
+
+def build_phase2_audit_review(task_id: str, task_root: Path) -> dict[str, Any]:
+    """Read Phase 2 artifacts and return a UI-safe audit review payload."""
+    warnings: list[str] = []
+    try:
+        research_dir = task_root / "research"
+        sources_payload = _read_audit_json(research_dir / "sources.json", "sources.json", warnings)
+        if not sources_payload:
+            return _audit_empty_payload(task_id, warnings or ["sources.json is unavailable."])
+
+        notes_payload = _read_audit_json(research_dir / "research_notes.json", "research_notes.json", warnings)
+        notes_payload = notes_payload or {}
+        raw_sources = _list_or_empty(sources_payload.get("items"))
+        sources: list[dict[str, Any]] = []
+        real_url_count = 0
+        manual_review_count = 0
+        for index, raw in enumerate(raw_sources, start=1):
+            if not isinstance(raw, dict):
+                warnings.append(f"Source item {index} is not a JSON object and was skipped.")
+                continue
+            url = clean_text(raw.get("url"), limit=1000)
+            normalized_url = clean_text(raw.get("normalized_url"), limit=1000)
+            flags = [clean_text(item, limit=120) for item in _list_or_empty(raw.get("audit_flags")) if clean_text(item, limit=120)]
+            needs_manual_review = _bool_from_metadata(raw.get("needs_manual_review"))
+            if _is_real_url(url) or _is_real_url(normalized_url):
+                real_url_count += 1
+            if needs_manual_review:
+                manual_review_count += 1
+            sources.append(
+                {
+                    "source_id": clean_text(raw.get("source_id") or raw.get("id"), fallback=f"s{index:03d}", limit=80),
+                    "title": clean_text(raw.get("title"), fallback="(missing title)", limit=300),
+                    "url": url,
+                    "normalized_url": normalized_url,
+                    "domain": clean_text(raw.get("domain"), limit=200),
+                    "query_id": clean_text(raw.get("query_id"), limit=80),
+                    "rank": raw.get("rank"),
+                    "source_type": clean_text(raw.get("audit_source_type") or raw.get("source_type"), limit=120),
+                    "needs_manual_review": needs_manual_review,
+                    "audit_flags": flags,
+                }
+            )
+
+        source_quality_summary = _dict_or_empty(sources_payload.get("source_quality_summary"))
+        quality = _dict_or_empty(sources_payload.get("quality")) or source_quality_summary
+        audit_summary = _dict_or_empty(notes_payload.get("audit_summary"))
+        fallback = _dict_or_empty(sources_payload.get("fallback"))
+        source_count = sources_payload.get("total_sources")
+        if not isinstance(source_count, int):
+            source_count = len(sources)
+
+        source_warnings = [clean_text(item, limit=500) for item in _list_or_empty(sources_payload.get("warnings")) if clean_text(item, limit=500)]
+        notes_warnings = [clean_text(item, limit=500) for item in _list_or_empty(notes_payload.get("warnings")) if clean_text(item, limit=500)]
+        warnings.extend(item for item in [*source_warnings, *notes_warnings] if item and item not in warnings)
+
+        return {
+            "available": True,
+            "task_id": task_id,
+            "fallback_used": bool(fallback.get("used") or sources_payload.get("search_fallback_used")),
+            "source_count": source_count,
+            "real_url_count": real_url_count,
+            "manual_review_count": manual_review_count,
+            "quality": quality,
+            "source_quality_summary": source_quality_summary,
+            "audit_summary": audit_summary,
+            "coverage": _list_or_empty(notes_payload.get("coverage")),
+            "manual_review_checklist": _list_or_empty(notes_payload.get("manual_review_checklist")),
+            "sources": sources,
+            "warnings": warnings,
+            "disclaimer": PHASE2_AUDIT_DISCLAIMER,
+        }
+    except Exception as exc:
+        return _audit_empty_payload(task_id, [*warnings, f"Audit review payload could not be prepared: {exc}"])
