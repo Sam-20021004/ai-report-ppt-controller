@@ -1,5 +1,6 @@
 const DRAFT_KEY = "ai-report-controller:draft-v2";
 const RECENT_KEY = "ai-report-controller:recent-v2";
+const CURRENT_TASK_KEY = "ai_report_current_task_id";
 
 const examples = {
   patent: {
@@ -153,8 +154,12 @@ async function init() {
   updateDraftButton();
   renderRecentTasks();
   renderPreflight();
-  await loadHealth();
+  await loadHealth().catch((error) => {
+    logSystem("Backend health check failed", { error: error.message });
+    renderConnections();
+  });
   renderRegistry();
+  await restoreCurrentTaskOnReload();
 }
 
 async function api(path, options = {}) {
@@ -223,6 +228,25 @@ async function loadHealth() {
   state.health = await api("/api/health");
   logSystem("健康检查完成", state.health);
   renderConnections();
+}
+
+async function restoreCurrentTaskOnReload() {
+  const taskId = getRememberedCurrentTaskId();
+  if (!taskId) return;
+  try {
+    const record = await api(`/api/task/${encodeURIComponent(taskId)}`);
+    renderTask(record);
+    rememberTask(record);
+    setTab("workflow");
+    logSystem("Current task restored after reload", { task_id: record.task_id });
+  } catch (error) {
+    forgetCurrentTask();
+    state.taskId = null;
+    stopTaskPolling();
+    renderEmptyWorkflow();
+    renderPhase2AuditUnavailable("运行研究任务后显示审计信息。");
+    logSystem("Current task restore skipped", { task_id: taskId, error: error.message });
+  }
 }
 
 async function loadConfig() {
@@ -388,6 +412,7 @@ function restoreDraft() {
 function clearForm() {
   form.reset();
   state.taskId = null;
+  forgetCurrentTask();
   stopTaskPolling();
   document.querySelectorAll("[name='ppt_topic'], [name='word_topic']").forEach((input) => {
     input.dataset.userEdited = "";
@@ -439,6 +464,7 @@ function fillForm(values) {
 function clearWithoutToast() {
   form.reset();
   state.taskId = null;
+  forgetCurrentTask();
   stopTaskPolling();
   document.querySelectorAll("input[type='file']").forEach((input) => {
     input.value = "";
@@ -457,6 +483,7 @@ function clearWithoutToast() {
 
 function renderTask(record) {
   state.taskId = record.task_id;
+  rememberCurrentTask(record.task_id);
   emptyWorkflow.classList.add("hidden");
   statusEl.textContent = `${record.status} | ${record.task_id}`;
   currentTask.textContent = `${record.request.title} (${record.task_id})`;
@@ -772,6 +799,32 @@ function renderFiles(files) {
       <span>${Math.ceil(file.size / 1024)} KB</span>
     </div>
   `).join("");
+}
+
+function getRememberedCurrentTaskId() {
+  try {
+    return String(localStorage.getItem(CURRENT_TASK_KEY) || "").trim();
+  } catch (error) {
+    logSystem("Current task id read failed", { error: error.message });
+    return "";
+  }
+}
+
+function rememberCurrentTask(taskId) {
+  if (!taskId) return;
+  try {
+    localStorage.setItem(CURRENT_TASK_KEY, taskId);
+  } catch (error) {
+    logSystem("Current task id save failed", { error: error.message });
+  }
+}
+
+function forgetCurrentTask() {
+  try {
+    localStorage.removeItem(CURRENT_TASK_KEY);
+  } catch (error) {
+    logSystem("Current task id clear failed", { error: error.message });
+  }
 }
 
 function rememberTask(record) {
