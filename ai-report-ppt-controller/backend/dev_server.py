@@ -28,7 +28,7 @@ DEFAULT_PORT = int(os.getenv("APP_PORT", "7860"))
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from backend.models.task import TaskRequest
-from backend.services.phase2_artifacts import build_phase2_audit_review
+from backend.services.phase2_artifacts import build_phase2_audit_review, load_source_review, save_source_review_updates
 from backend.services.task_runner import (
     create_task as workflow_create_task,
     list_task_files as workflow_list_task_files,
@@ -136,6 +136,17 @@ def read_json(handler: BaseHTTPRequestHandler) -> dict:
     if length == 0:
         return {}
     return json.loads(handler.rfile.read(length).decode("utf-8", errors="replace"))
+
+
+def source_review_response(task_id: str, review: dict) -> dict:
+    return {
+        "ok": True,
+        "task_id": task_id,
+        "items": review.get("items") or [],
+        "summary": review.get("summary") or {},
+        "updated_at": review.get("updated_at") or "",
+        "warnings": review.get("warnings") or [],
+    }
 
 
 def _mark_background_failure(task_id: str, exc: Exception) -> None:
@@ -431,6 +442,15 @@ class Handler(BaseHTTPRequestHandler):
             config = load_config()
             config["api_token"] = "***" if config.get("api_token") else ""
             return json_response(self, 200, config)
+        if path.startswith("/api/tasks/"):
+            parts = path.strip("/").split("/")
+            task_id = parts[2] if len(parts) > 2 else ""
+            if len(parts) >= 5 and parts[3] == "phase2" and parts[4] == "source-review":
+                task_root = workflow_task_dir(task_id)
+                if not task_root.exists():
+                    return json_response(self, 404, {"ok": False, "error": "Task not found."})
+                review = load_source_review(task_id, task_root)
+                return json_response(self, 200, source_review_response(task_id, review))
         if path.startswith("/api/task/"):
             parts = path.strip("/").split("/")
             task_id = parts[2]
@@ -472,6 +492,19 @@ class Handler(BaseHTTPRequestHandler):
             return json_response(self, 200, check_chrome())
         if path == "/api/task/create":
             return json_response(self, 200, workflow_create_task(TaskRequest(**read_json(self))).model_dump())
+        if path.startswith("/api/tasks/"):
+            parts = path.strip("/").split("/")
+            task_id = parts[2] if len(parts) > 2 else ""
+            if len(parts) >= 5 and parts[3] == "phase2" and parts[4] == "source-review":
+                task_root = workflow_task_dir(task_id)
+                if not task_root.exists():
+                    return json_response(self, 404, {"ok": False, "error": "Task not found."})
+                payload = read_json(self)
+                try:
+                    review = save_source_review_updates(task_id, task_root, payload.get("items") or [])
+                except ValueError as exc:
+                    return json_response(self, 400, {"ok": False, "error": "Invalid source review payload.", "detail": str(exc)})
+                return json_response(self, 200, source_review_response(task_id, review))
         if path.startswith("/api/task/"):
             parts = path.strip("/").split("/")
             task_id = parts[2]

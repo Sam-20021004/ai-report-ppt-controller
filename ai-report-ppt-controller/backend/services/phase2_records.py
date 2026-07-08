@@ -11,6 +11,7 @@ from backend.services.research_summarizer import SCHEMA_VERSION as RESEARCH_NOTE
 PHASE2_RESEARCH_ARTIFACTS = {
     "research/search_plan.json": "检索计划",
     "research/sources.json": "真实搜索候选来源与审计信息",
+    "research/source_review.json": "Phase 2 人工来源复核状态",
     "research/research_notes.md": "人工核查用资料整理",
     "research/research_notes.json": "结构化研究备注与质量摘要",
 }
@@ -45,7 +46,7 @@ def build_file_metadata(task_id: str, file_path: Path, storage_dir: Path, task_r
 
 def collect_phase2_files(task_id: str, research_dir: Path, storage_dir: Path, task_root: Path) -> list[dict[str, Any]]:
     files = []
-    for name in ("search_plan.json", "sources.json", "research_notes.md", "research_notes.json"):
+    for name in ("search_plan.json", "sources.json", "source_review.json", "research_notes.md", "research_notes.json"):
         path = research_dir / name
         if path.exists() and path.is_file():
             files.append(build_file_metadata(task_id, path, storage_dir, task_root))

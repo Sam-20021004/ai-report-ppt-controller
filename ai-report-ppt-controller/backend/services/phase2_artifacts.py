@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from hashlib import sha1
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,238 @@ PHASE2_AUDIT_DISCLAIMER = (
     "Audit information is provided to assist human review. It is derived from "
     "search result metadata and does not represent fact verification conclusions."
 )
+
+SOURCE_REVIEW_VERSION = 1
+SOURCE_REVIEW_STATUSES = {"unreviewed", "approved", "rejected", "needs_followup"}
+SOURCE_REVIEW_DEFAULT_REVIEWER = "local-user"
+
+
+def source_review_path(task_root: Path) -> Path:
+    return task_root / "research" / "source_review.json"
+
+
+def _source_key_digest(value: str) -> str:
+    return sha1(value.encode("utf-8")).hexdigest()[:16]
+
+
+def source_review_key(source: dict[str, Any], index: int) -> str:
+    url = clean_text(source.get("normalized_url") or source.get("url"), limit=1000)
+    if url:
+        return f"url:{_source_key_digest(url.strip().lower().rstrip('/'))}"
+    title = clean_text(source.get("title"), fallback=f"source-{index}", limit=300)
+    return f"title:{_source_key_digest(f'{title.strip().lower()}|{index}')}"
+
+
+def _review_summary(items: list[dict[str, Any]]) -> dict[str, int]:
+    summary = {
+        "total": len(items),
+        "unreviewed": 0,
+        "approved": 0,
+        "rejected": 0,
+        "needs_followup": 0,
+    }
+    for item in items:
+        status = item.get("review_status")
+        if status in SOURCE_REVIEW_STATUSES:
+            summary[status] += 1
+        else:
+            summary["unreviewed"] += 1
+    return summary
+
+
+def _read_json_object(path: Path, label: str, warnings: list[str]) -> dict[str, Any]:
+    if not path.exists():
+        warnings.append(f"{label} is missing.")
+        return {}
+    try:
+        data = read_json(path, {})
+    except Exception as exc:
+        warnings.append(f"{label} could not be parsed: {exc}")
+        return {}
+    if not isinstance(data, dict):
+        warnings.append(f"{label} is not a JSON object.")
+        return {}
+    return data
+
+
+def _read_sources_for_review(task_root: Path, warnings: list[str]) -> list[dict[str, Any]]:
+    payload = _read_json_object(task_root / "research" / "sources.json", "sources.json", warnings)
+    items = payload.get("items")
+    if not isinstance(items, list):
+        return []
+    return [item for item in items if isinstance(item, dict)]
+
+
+def _clean_review_status(value: Any) -> str:
+    status = clean_text(value, fallback="unreviewed", limit=80)
+    return status if status in SOURCE_REVIEW_STATUSES else "unreviewed"
+
+
+def _review_item_from_source(index: int, source: dict[str, Any], existing: dict[str, Any] | None = None) -> dict[str, Any]:
+    current = existing or {}
+    return {
+        "source_key": source_review_key(source, index),
+        "source_id": clean_text(source.get("source_id") or source.get("id"), fallback=f"s{index:03d}", limit=80),
+        "url": clean_text(source.get("url"), limit=1000),
+        "normalized_url": clean_text(source.get("normalized_url"), limit=1000),
+        "title": clean_text(source.get("title"), fallback="(missing title)", limit=300),
+        "review_status": _clean_review_status(current.get("review_status")),
+        "review_note": clean_text(current.get("review_note"), limit=1000),
+        "reviewed_at": clean_text(current.get("reviewed_at"), limit=80),
+        "reviewer": clean_text(current.get("reviewer"), fallback=SOURCE_REVIEW_DEFAULT_REVIEWER, limit=120),
+        "stale": False,
+    }
+
+
+def _normalize_existing_review_item(item: dict[str, Any]) -> dict[str, Any] | None:
+    source_key = clean_text(item.get("source_key"), limit=120)
+    if not source_key:
+        return None
+    return {
+        "source_key": source_key,
+        "source_id": clean_text(item.get("source_id"), limit=80),
+        "url": clean_text(item.get("url"), limit=1000),
+        "normalized_url": clean_text(item.get("normalized_url"), limit=1000),
+        "title": clean_text(item.get("title"), fallback="(missing title)", limit=300),
+        "review_status": _clean_review_status(item.get("review_status")),
+        "review_note": clean_text(item.get("review_note"), limit=1000),
+        "reviewed_at": clean_text(item.get("reviewed_at"), limit=80),
+        "reviewer": clean_text(item.get("reviewer"), fallback=SOURCE_REVIEW_DEFAULT_REVIEWER, limit=120),
+        "stale": bool(item.get("stale")),
+    }
+
+
+def _read_existing_review(task_root: Path, warnings: list[str]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    path = source_review_path(task_root)
+    if not path.exists():
+        return {}, []
+    payload = _read_json_object(path, "source_review.json", warnings)
+    raw_items = payload.get("items") if isinstance(payload, dict) else []
+    items = []
+    if isinstance(raw_items, list):
+        for raw in raw_items:
+            if isinstance(raw, dict):
+                item = _normalize_existing_review_item(raw)
+                if item:
+                    items.append(item)
+    return payload, items
+
+
+def _merge_source_review_items(task_root: Path, warnings: list[str]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+    sources = _read_sources_for_review(task_root, warnings)
+    existing_payload, existing_items = _read_existing_review(task_root, warnings)
+    existing_by_key = {item["source_key"]: item for item in existing_items}
+    active_keys: set[str] = set()
+    merged: list[dict[str, Any]] = []
+
+    for index, source in enumerate(sources, start=1):
+        key = source_review_key(source, index)
+        active_keys.add(key)
+        merged.append(_review_item_from_source(index, source, existing_by_key.get(key)))
+
+    for item in existing_items:
+        if item["source_key"] in active_keys:
+            continue
+        stale_item = {**item, "stale": True}
+        merged.append(stale_item)
+
+    active = [item for item in merged if not item.get("stale")]
+    return merged, active, existing_payload
+
+
+def _write_source_review(task_id: str, task_root: Path, items: list[dict[str, Any]], updated_at: str | None = None) -> dict[str, Any]:
+    payload = {
+        "task_id": task_id,
+        "version": SOURCE_REVIEW_VERSION,
+        "updated_at": updated_at or now(),
+        "items": items,
+    }
+    write_json(source_review_path(task_root), payload)
+    return payload
+
+
+def load_source_review(task_id: str, task_root: Path) -> dict[str, Any]:
+    warnings: list[str] = []
+    try:
+        all_items, active_items, existing_payload = _merge_source_review_items(task_root, warnings)
+        existing_items = existing_payload.get("items") if isinstance(existing_payload, dict) else None
+        should_write = (
+            not source_review_path(task_root).exists()
+            or existing_payload.get("task_id") != task_id
+            or existing_payload.get("version") != SOURCE_REVIEW_VERSION
+            or existing_items != all_items
+        )
+        updated_at = clean_text(existing_payload.get("updated_at"), limit=80) if isinstance(existing_payload, dict) else ""
+        payload = (
+            _write_source_review(task_id, task_root, all_items)
+            if should_write
+            else {
+                "task_id": task_id,
+                "version": SOURCE_REVIEW_VERSION,
+                "updated_at": updated_at,
+                "items": all_items,
+            }
+        )
+        return {
+            "task_id": task_id,
+            "version": SOURCE_REVIEW_VERSION,
+            "updated_at": payload.get("updated_at") or updated_at,
+            "items": active_items,
+            "summary": _review_summary(active_items),
+            "warnings": warnings,
+        }
+    except Exception as exc:
+        return {
+            "task_id": task_id,
+            "version": SOURCE_REVIEW_VERSION,
+            "updated_at": "",
+            "items": [],
+            "summary": _review_summary([]),
+            "warnings": [*warnings, f"source_review.json could not be prepared: {exc}"],
+        }
+
+
+def save_source_review_updates(
+    task_id: str,
+    task_root: Path,
+    updates: list[dict[str, Any]],
+    reviewer: str = SOURCE_REVIEW_DEFAULT_REVIEWER,
+) -> dict[str, Any]:
+    if not isinstance(updates, list):
+        raise ValueError("items must be a list.")
+
+    warnings: list[str] = []
+    all_items, _, _ = _merge_source_review_items(task_root, warnings)
+    by_key = {item["source_key"]: item for item in all_items}
+    reviewed_at = now()
+    reviewer_name = clean_text(reviewer, fallback=SOURCE_REVIEW_DEFAULT_REVIEWER, limit=120)
+
+    for update in updates:
+        if not isinstance(update, dict):
+            raise ValueError("Each review item must be an object.")
+        source_key = clean_text(update.get("source_key"), limit=120)
+        if not source_key or source_key not in by_key:
+            raise ValueError(f"Unknown source_key: {source_key or '(missing)'}")
+        review_status = clean_text(update.get("review_status"), limit=80)
+        if review_status not in SOURCE_REVIEW_STATUSES:
+            allowed = ", ".join(sorted(SOURCE_REVIEW_STATUSES))
+            raise ValueError(f"Invalid review_status '{review_status}'. Allowed values: {allowed}.")
+        item = by_key[source_key]
+        item["review_status"] = review_status
+        item["review_note"] = clean_text(update.get("review_note"), limit=1000)
+        item["reviewed_at"] = reviewed_at
+        item["reviewer"] = clean_text(update.get("reviewer"), fallback=reviewer_name, limit=120)
+
+    _write_source_review(task_id, task_root, all_items, updated_at=reviewed_at)
+    active_items = [item for item in all_items if not item.get("stale")]
+    return {
+        "task_id": task_id,
+        "version": SOURCE_REVIEW_VERSION,
+        "updated_at": reviewed_at,
+        "items": active_items,
+        "summary": _review_summary(active_items),
+        "warnings": warnings,
+    }
 
 
 def _strategy_flags(request: Any, source_scope: list[str]) -> dict[str, Any]:
@@ -458,6 +691,7 @@ def write_phase2_contract_artifacts(record: Any, workspace: Path, storage_dir: P
     sources = enhance_sources_audit(search_plan, sources)
     write_json(search_plan_path, search_plan)
     write_json(sources_path, sources)
+    load_source_review(record.task_id, task_root)
 
     phase2_files = collect_phase2_files(record.task_id, research_dir, storage_dir, task_root)
     update_phase2_record(record, search_plan, sources, phase2_files, planner_errors)
@@ -537,6 +771,7 @@ def execute_phase2_search_plan(record: Any, workspace: Path, settings: Any, stor
 
     sources = enhance_sources_audit(search_plan, sources)
     write_json(sources_path, sources)
+    load_source_review(record.task_id, task_root)
 
     phase2_files = collect_phase2_files(record.task_id, research_dir, storage_dir, task_root)
     update_phase2_record(record, search_plan, sources, phase2_files, planner_errors)
@@ -572,6 +807,7 @@ def summarize_phase2_research(
         task_id=record.task_id,
         task_metadata=phase2_task_metadata(record),
     )
+    load_source_review(record.task_id, task_root)
     phase2_files = collect_phase2_files(record.task_id, research_dir, storage_dir, task_root)
     update_phase2_record(
         record,
@@ -606,6 +842,7 @@ def _audit_empty_payload(task_id: str, warnings: list[str]) -> dict[str, Any]:
         "quality": {},
         "source_quality_summary": {},
         "audit_summary": {},
+        "review_summary": _review_summary([]),
         "coverage": [],
         "manual_review_checklist": [],
         "sources": [],
@@ -658,6 +895,13 @@ def build_phase2_audit_review(task_id: str, task_root: Path) -> dict[str, Any]:
 
         notes_payload = _read_audit_json(research_dir / "research_notes.json", "research_notes.json", warnings)
         notes_payload = notes_payload or {}
+        review_payload = load_source_review(task_id, task_root)
+        warnings.extend(item for item in review_payload.get("warnings", []) if item and item not in warnings)
+        review_by_key = {
+            item.get("source_key"): item
+            for item in review_payload.get("items", [])
+            if isinstance(item, dict) and item.get("source_key")
+        }
         raw_sources = _list_or_empty(sources_payload.get("items"))
         sources: list[dict[str, Any]] = []
         real_url_count = 0
@@ -668,6 +912,8 @@ def build_phase2_audit_review(task_id: str, task_root: Path) -> dict[str, Any]:
                 continue
             url = clean_text(raw.get("url"), limit=1000)
             normalized_url = clean_text(raw.get("normalized_url"), limit=1000)
+            source_key = source_review_key(raw, index)
+            review = review_by_key.get(source_key) or {}
             flags = [clean_text(item, limit=120) for item in _list_or_empty(raw.get("audit_flags")) if clean_text(item, limit=120)]
             needs_manual_review = _bool_from_metadata(raw.get("needs_manual_review"))
             if _is_real_url(url) or _is_real_url(normalized_url):
@@ -677,6 +923,7 @@ def build_phase2_audit_review(task_id: str, task_root: Path) -> dict[str, Any]:
             sources.append(
                 {
                     "source_id": clean_text(raw.get("source_id") or raw.get("id"), fallback=f"s{index:03d}", limit=80),
+                    "source_key": source_key,
                     "title": clean_text(raw.get("title"), fallback="(missing title)", limit=300),
                     "url": url,
                     "normalized_url": normalized_url,
@@ -686,6 +933,10 @@ def build_phase2_audit_review(task_id: str, task_root: Path) -> dict[str, Any]:
                     "source_type": clean_text(raw.get("audit_source_type") or raw.get("source_type"), limit=120),
                     "needs_manual_review": needs_manual_review,
                     "audit_flags": flags,
+                    "review_status": review.get("review_status") or "unreviewed",
+                    "review_note": review.get("review_note") or "",
+                    "reviewed_at": review.get("reviewed_at") or "",
+                    "reviewer": review.get("reviewer") or SOURCE_REVIEW_DEFAULT_REVIEWER,
                 }
             )
 
@@ -711,6 +962,7 @@ def build_phase2_audit_review(task_id: str, task_root: Path) -> dict[str, Any]:
             "quality": quality,
             "source_quality_summary": source_quality_summary,
             "audit_summary": audit_summary,
+            "review_summary": review_payload.get("summary") or _review_summary(sources),
             "coverage": _list_or_empty(notes_payload.get("coverage")),
             "manual_review_checklist": _list_or_empty(notes_payload.get("manual_review_checklist")),
             "sources": sources,

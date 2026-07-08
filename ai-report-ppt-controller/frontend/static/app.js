@@ -72,6 +72,15 @@ const state = {
   pollTimer: null,
 };
 
+const REVIEW_STATUS_LABELS = {
+  unreviewed: "未复核",
+  approved: "通过",
+  rejected: "驳回",
+  needs_followup: "待跟进",
+};
+
+const REVIEW_STATUS_OPTIONS = Object.keys(REVIEW_STATUS_LABELS);
+
 const form = document.querySelector("#task-form");
 const workflow = document.querySelector("#workflow");
 const emptyWorkflow = document.querySelector("#empty-workflow");
@@ -586,6 +595,10 @@ function renderPhase2Audit(data) {
       ${renderAuditKeyValues(data.audit_summary, "暂无审计摘要")}
     </section>
     <section class="audit-section">
+      <h3>source_review_summary</h3>
+      ${renderAuditKeyValues(data.review_summary, "暂无人工复核状态")}
+    </section>
+    <section class="audit-section">
       <h3>coverage</h3>
       ${renderCoverage(data.coverage)}
     </section>
@@ -599,6 +612,7 @@ function renderPhase2Audit(data) {
     </section>
     ${renderAuditWarnings(warnings)}
   `;
+  bindAuditReviewControls();
 }
 
 function renderAuditKeyValues(value, emptyText) {
@@ -652,6 +666,15 @@ function renderAuditSource(source) {
   const flags = Array.isArray(item.audit_flags) ? item.audit_flags.filter(Boolean) : [];
   const url = safeExternalUrl(item.url || item.normalized_url);
   const title = item.title || item.normalized_url || item.url || "(missing title)";
+  const sourceKey = String(item.source_key || "");
+  const reviewStatus = normalizeReviewStatus(item.review_status);
+  const reviewNote = item.review_note || "";
+  const reviewMeta = item.reviewed_at
+    ? `reviewed_at=${item.reviewed_at} / reviewer=${item.reviewer || "local-user"}`
+    : "尚未保存人工复核";
+  const statusOptions = REVIEW_STATUS_OPTIONS.map((status) => `
+    <option value="${escapeHtml(status)}" ${status === reviewStatus ? "selected" : ""}>${escapeHtml(REVIEW_STATUS_LABELS[status])}</option>
+  `).join("");
   const flagHtml = flags.length
     ? flags.map((flag) => `<span>${escapeHtml(flag)}</span>`).join("")
     : `<span class="audit-flag-muted">无明显审计标记</span>`;
@@ -666,8 +689,68 @@ function renderAuditSource(source) {
         : `<span class="audit-source-title">${escapeHtml(title)}</span>`}
       <span class="audit-domain">${escapeHtml(item.domain || item.normalized_url || item.url || "unknown domain")}</span>
       <div class="audit-flags">${flagHtml}</div>
+      <div class="audit-review" data-source-key="${escapeHtml(sourceKey)}">
+        <div class="audit-review-status-line">
+          <span>当前复核状态</span>
+          <span class="badge review-${escapeHtml(reviewStatus)}">${escapeHtml(REVIEW_STATUS_LABELS[reviewStatus])}</span>
+        </div>
+        <div class="audit-review-row">
+          <label>
+            <span>复核状态</span>
+            <select class="audit-review-status" data-source-key="${escapeHtml(sourceKey)}">${statusOptions}</select>
+          </label>
+          <button type="button" class="audit-review-save secondary" data-source-key="${escapeHtml(sourceKey)}">保存</button>
+        </div>
+        <label class="audit-review-note-field">
+          <span>备注</span>
+          <textarea class="audit-review-note" data-source-key="${escapeHtml(sourceKey)}" rows="2" maxlength="1000">${escapeHtml(reviewNote)}</textarea>
+        </label>
+        <span class="audit-review-meta">${escapeHtml(reviewMeta)}</span>
+      </div>
     </article>
   `;
+}
+
+function bindAuditReviewControls() {
+  if (!phase2Audit) return;
+  phase2Audit.querySelectorAll(".audit-review-save").forEach((button) => {
+    button.addEventListener("click", () => saveAuditSourceReview(button.dataset.sourceKey || "", button));
+  });
+}
+
+async function saveAuditSourceReview(sourceKey, button) {
+  if (!state.taskId) return showToast("尚未创建任务。");
+  const panel = button.closest(".audit-review");
+  if (!panel || !sourceKey) return showToast("来源复核状态缺少 source_key。");
+  const reviewStatus = normalizeReviewStatus(panel.querySelector(".audit-review-status")?.value);
+  const reviewNote = panel.querySelector(".audit-review-note")?.value || "";
+  button.disabled = true;
+  try {
+    const result = await api(`/api/tasks/${state.taskId}/phase2/source-review`, {
+      method: "POST",
+      body: JSON.stringify({
+        items: [
+          {
+            source_key: sourceKey,
+            review_status: reviewStatus,
+            review_note: reviewNote,
+          },
+        ],
+      }),
+    });
+    logSystem("来源复核状态已保存", result);
+    showToast("来源复核状态已保存。");
+    await loadPhase2Audit();
+  } catch (error) {
+    logSystem("来源复核状态保存失败", { error: error.message });
+    showToast(`来源复核保存失败：${error.message}`);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function normalizeReviewStatus(value) {
+  return REVIEW_STATUS_LABELS[value] ? value : "unreviewed";
 }
 
 function renderAuditWarnings(warnings) {
