@@ -132,6 +132,63 @@ def load_record(task_id: str) -> TaskRecord:
     return TaskRecord(**json.loads(path.read_text(encoding="utf-8-sig")))
 
 
+def _phase2_artifact_count(record: dict[str, Any], workspace: Path) -> int:
+    phase2_files = record.get("phase2_files")
+    if isinstance(phase2_files, list):
+        return sum(1 for item in phase2_files if isinstance(item, dict) and item.get("is_phase2_artifact"))
+
+    research_dir = workspace / "research"
+    known_files = [
+        "search_plan.json",
+        "sources.json",
+        "source_review.json",
+        "research_notes.md",
+        "research_notes.json",
+    ]
+    return sum(1 for name in known_files if (research_dir / name).exists())
+
+
+def _task_summary_from_status(path: Path) -> dict[str, Any] | None:
+    try:
+        record = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(record, dict):
+        return None
+
+    workspace = path.parents[1]
+    task_id = str(record.get("task_id") or workspace.name)
+    request = record.get("request") if isinstance(record.get("request"), dict) else {}
+    phase2_artifact_count = _phase2_artifact_count(record, workspace)
+    return {
+        "task_id": task_id,
+        "short_task_id": task_id[:8],
+        "title": str(request.get("title") or task_id),
+        "task_type": str(request.get("task_type") or ""),
+        "status": str(record.get("status") or "unknown"),
+        "created_at": str(record.get("created_at") or ""),
+        "updated_at": str(record.get("updated_at") or record.get("created_at") or ""),
+        "phase2_artifact_count": phase2_artifact_count,
+        "has_phase2_artifacts": phase2_artifact_count > 0,
+    }
+
+
+def list_task_summaries(limit: int = 20, job_root: Path = JOB_ROOT) -> list[dict[str, Any]]:
+    if not job_root.exists():
+        return []
+
+    summaries: list[dict[str, Any]] = []
+    for task_root in job_root.iterdir():
+        if not task_root.is_dir():
+            continue
+        summary = _task_summary_from_status(task_root / "state" / "status.json")
+        if summary:
+            summaries.append(summary)
+
+    summaries.sort(key=lambda item: item.get("updated_at") or item.get("created_at") or "", reverse=True)
+    return summaries[: max(1, limit)]
+
+
 def list_task_files(task_id: str) -> list[dict]:
     directory = task_dir(task_id)
     if not directory.exists():

@@ -31,6 +31,7 @@ from backend.models.task import TaskRequest
 from backend.services.phase2_artifacts import build_phase2_audit_review, load_source_review, save_source_review_updates
 from backend.services.task_runner import (
     create_task as workflow_create_task,
+    list_task_summaries as workflow_list_task_summaries,
     list_task_files as workflow_list_task_files,
     load_record as workflow_load_record,
     run_workflow as workflow_run_workflow,
@@ -442,6 +443,8 @@ class Handler(BaseHTTPRequestHandler):
             config = load_config()
             config["api_token"] = "***" if config.get("api_token") else ""
             return json_response(self, 200, config)
+        if path == "/api/tasks":
+            return json_response(self, 200, {"tasks": workflow_list_task_summaries()})
         if path.startswith("/api/tasks/"):
             parts = path.strip("/").split("/")
             task_id = parts[2] if len(parts) > 2 else ""

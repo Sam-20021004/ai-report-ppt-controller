@@ -465,6 +465,15 @@ button:disabled {
   border-radius: 7px;
   background: var(--panel-soft);
   padding: 8px 10px;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.recent-item:hover,
+.recent-item.active {
+  border-color: var(--blue);
+  background: #fff;
 }
 
 .recent-item span {

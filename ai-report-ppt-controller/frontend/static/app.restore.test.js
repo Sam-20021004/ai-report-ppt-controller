@@ -43,10 +43,40 @@ class FakeElement {
     this.checked = false;
     this.type = "text";
     this.textContent = "";
-    this.innerHTML = "";
+    this._innerHTML = "";
+    this.recentItems = [];
+    this.eventListeners = new Map();
   }
 
-  addEventListener() {}
+  get innerHTML() {
+    return this._innerHTML;
+  }
+
+  set innerHTML(value) {
+    this._innerHTML = String(value ?? "");
+    if (this.selector !== "#recent-tasks") return;
+    this.recentItems = [];
+    const pattern = /<button[^>]*class="[^"]*recent-item[^"]*"[^>]*data-task-id="([^"]+)"/g;
+    let match = pattern.exec(this._innerHTML);
+    while (match) {
+      const element = new FakeElement(".recent-item");
+      element.ownerDocument = this.ownerDocument;
+      element.dataset.taskId = match[1];
+      this.recentItems.push(element);
+      match = pattern.exec(this._innerHTML);
+    }
+  }
+
+  addEventListener(type, listener) {
+    if (!this.eventListeners.has(type)) this.eventListeners.set(type, []);
+    this.eventListeners.get(type).push(listener);
+  }
+
+  click() {
+    for (const listener of this.eventListeners.get("click") || []) {
+      listener({ target: this, currentTarget: this });
+    }
+  }
 
   appendChild(child) {
     this.children.push(child);
@@ -60,6 +90,9 @@ class FakeElement {
   }
 
   querySelectorAll(selector) {
+    if (this.selector === "#recent-tasks" && selector === ".recent-item") {
+      return this.recentItems || [];
+    }
     return this.ownerDocument.querySelectorAll(selector);
   }
 
@@ -200,6 +233,20 @@ function jsonResponse(data, ok = true) {
   };
 }
 
+async function waitFor(assertion, attempts = 20) {
+  let lastError;
+  for (let index = 0; index < attempts; index += 1) {
+    try {
+      assertion();
+      return;
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  }
+  throw lastError;
+}
+
 test("initialization restores the saved current task after browser reload", async () => {
   const fetchCalls = [];
   const document = createFakeDocument();
@@ -280,5 +327,111 @@ test("initialization restores the saved current task after browser reload", asyn
   ]);
   assert.equal(document.querySelector("#current-task").textContent, "Reload restore smoke (task-restore-1)");
   assert.match(document.querySelector("#phase2-audit").innerHTML, /phase2\.11 reload restore smoke note/);
+  assert.match(document.querySelector("#phase2-audit").innerHTML, /approved/);
+});
+
+test("initialization loads history and clicking a history task opens it", async () => {
+  const fetchCalls = [];
+  const document = createFakeDocument();
+  const localStorage = createStorage({});
+
+  const taskRecord = {
+    task_id: "task-history-2",
+    status: "done",
+    request: { title: "Opened from history" },
+    steps: [],
+    phase2_outputs_summary: { phase2_research_summary: "ok" },
+    phase2_errors: [],
+  };
+
+  const context = vm.createContext({
+    console,
+    document,
+    FormData: FakeFormData,
+    localStorage,
+    setTimeout,
+    clearTimeout,
+    fetch: async (path) => {
+      fetchCalls.push(path);
+      if (path === "/api/health") {
+        return jsonResponse({ ok: true, phase: "test", storage: { writable: true } });
+      }
+      if (path === "/api/tasks") {
+        return jsonResponse({
+          tasks: [
+            {
+              task_id: "task-history-1",
+              short_task_id: "task-hi",
+              title: "Older task",
+              status: "done",
+              updated_at: "2026-07-08T10:00:00",
+              phase2_artifact_count: 0,
+              has_phase2_artifacts: false,
+            },
+            {
+              task_id: "task-history-2",
+              short_task_id: "task-hi",
+              title: "Opened from history",
+              status: "done",
+              updated_at: "2026-07-08T11:00:00",
+              phase2_artifact_count: 5,
+              has_phase2_artifacts: true,
+            },
+          ],
+        });
+      }
+      if (path === "/api/task/task-history-2") {
+        return jsonResponse(taskRecord);
+      }
+      if (path === "/api/task/task-history-2/files") {
+        return jsonResponse({
+          task_id: "task-history-2",
+          files: [{ file_name: "sources.json", file_id: "workspace/jobs/task-history-2/research/sources.json", size: 1024, is_phase2_artifact: true }],
+        });
+      }
+      if (path === "/api/task/task-history-2/phase2/audit") {
+        return jsonResponse({
+          available: true,
+          source_count: 1,
+          real_url_count: 1,
+          manual_review_count: 1,
+          review_summary: { total: 1, unreviewed: 0, approved: 1, rejected: 0, needs_followup: 0 },
+          sources: [
+            {
+              source_id: "S2",
+              source_key: "s2",
+              title: "History reviewed source",
+              url: "https://example.com/history",
+              review_status: "approved",
+              review_note: "history picker note",
+            },
+          ],
+        });
+      }
+      return jsonResponse({ error: `unexpected ${path}` }, false);
+    },
+    window: {
+      setInterval: () => 1,
+      clearInterval: () => {},
+    },
+  });
+
+  context.window.window = context.window;
+  context.window.document = document;
+  context.window.localStorage = localStorage;
+
+  vm.runInContext(readFileSync(APP_JS, "utf8"), context);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const recentTasks = document.querySelector("#recent-tasks");
+  assert.equal(recentTasks.recentItems.length, 2);
+  recentTasks.recentItems.find((item) => item.dataset.taskId === "task-history-2").click();
+  await waitFor(() => assert(fetchCalls.includes("/api/task/task-history-2")));
+  await waitFor(() => assert.equal(document.querySelector("#current-task").textContent, "Opened from history (task-history-2)"));
+
+  assert(fetchCalls.includes("/api/tasks"));
+  assert.equal(localStorage.getItem("ai_report_current_task_id"), "task-history-2");
+  assert.match(document.querySelector("#phase2-audit").innerHTML, /history picker note/);
   assert.match(document.querySelector("#phase2-audit").innerHTML, /approved/);
 });

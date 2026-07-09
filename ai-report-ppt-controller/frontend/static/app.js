@@ -71,6 +71,7 @@ const state = {
   health: null,
   checks: {},
   pollTimer: null,
+  taskHistory: [],
 };
 
 const REVIEW_STATUS_LABELS = {
@@ -159,6 +160,7 @@ async function init() {
     renderConnections();
   });
   renderRegistry();
+  await loadTaskHistory();
   await restoreCurrentTaskOnReload();
 }
 
@@ -234,10 +236,7 @@ async function restoreCurrentTaskOnReload() {
   const taskId = getRememberedCurrentTaskId();
   if (!taskId) return;
   try {
-    const record = await api(`/api/task/${encodeURIComponent(taskId)}`);
-    renderTask(record);
-    rememberTask(record);
-    setTab("workflow");
+    const record = await openTaskById(taskId, { showSuccess: false });
     logSystem("Current task restored after reload", { task_id: record.task_id });
   } catch (error) {
     forgetCurrentTask();
@@ -247,6 +246,17 @@ async function restoreCurrentTaskOnReload() {
     renderPhase2AuditUnavailable("运行研究任务后显示审计信息。");
     logSystem("Current task restore skipped", { task_id: taskId, error: error.message });
   }
+}
+
+async function loadTaskHistory() {
+  try {
+    const data = await api("/api/tasks");
+    state.taskHistory = normalizeTaskSummaries(data.tasks || []);
+  } catch (error) {
+    state.taskHistory = [];
+    logSystem("历史任务列表加载失败", { error: error.message });
+  }
+  renderRecentTasks();
 }
 
 async function loadConfig() {
@@ -327,6 +337,36 @@ async function refreshTask() {
   renderTask(record);
   rememberTask(record);
   await loadFiles();
+}
+
+async function openTaskById(taskId, options = {}) {
+  const normalizedTaskId = String(taskId || "").trim();
+  if (!normalizedTaskId) throw new Error("Task id is empty.");
+  try {
+    const record = await api(`/api/task/${encodeURIComponent(normalizedTaskId)}`);
+    renderTask(record);
+    rememberTask(record);
+    setTab("workflow");
+    if (options.showSuccess !== false) showToast("历史任务已打开。");
+    return record;
+  } catch (error) {
+    forgetCurrentTask();
+    if (!state.taskId) {
+      renderEmptyWorkflow();
+      renderPhase2AuditUnavailable("运行研究任务后显示审计信息。");
+    }
+    logSystem("历史任务打开失败", { task_id: normalizedTaskId, error: error.message });
+    if (options.showError !== false) showToast(`历史任务打开失败：${error.message}`);
+    throw error;
+  }
+}
+
+async function openHistoryTask(taskId) {
+  try {
+    await openTaskById(taskId);
+  } catch (error) {
+    // Error is already logged and surfaced by openTaskById.
+  }
 }
 
 function startTaskPolling() {
@@ -828,26 +868,92 @@ function forgetCurrentTask() {
 }
 
 function rememberTask(record) {
-  const raw = localStorage.getItem(RECENT_KEY);
-  const existing = raw ? JSON.parse(raw) : [];
+  const summary = taskSummaryFromRecord(record);
+  const existing = readStoredRecentTasks();
   const next = [
-    { task_id: record.task_id, title: record.request.title, status: record.status },
+    summary,
     ...existing.filter((item) => item.task_id !== record.task_id),
   ].slice(0, 5);
   localStorage.setItem(RECENT_KEY, JSON.stringify(next));
+  state.taskHistory = mergeTaskSummaries([summary, ...state.taskHistory]);
   renderRecentTasks();
 }
 
 function renderRecentTasks() {
-  const raw = localStorage.getItem(RECENT_KEY);
-  const tasks = raw ? JSON.parse(raw) : [];
+  const tasks = mergeTaskSummaries([...state.taskHistory, ...readStoredRecentTasks()]).slice(0, 10);
   if (!tasks.length) {
     recentTasks.textContent = "暂无最近任务";
     return;
   }
   recentTasks.innerHTML = tasks.map((task) => `
-    <div class="recent-item"><strong>${escapeHtml(task.title)}</strong><span>${escapeHtml(task.status)} · ${escapeHtml(task.task_id)}</span></div>
+    <button type="button" class="recent-item ${task.task_id === state.taskId ? "active" : ""}" data-task-id="${escapeHtml(task.task_id)}">
+      <strong>${escapeHtml(task.title || task.task_id)}</strong>
+      <span>${escapeHtml(task.status || "unknown")} · ${escapeHtml(task.short_task_id || String(task.task_id || "").slice(0, 8))} · ${escapeHtml(formatTaskTime(task))}</span>
+      <span>${escapeHtml(formatPhase2Flag(task))}</span>
+    </button>
   `).join("");
+  recentTasks.querySelectorAll(".recent-item").forEach((button) => {
+    button.addEventListener("click", () => openHistoryTask(button.dataset.taskId || ""));
+  });
+}
+
+function readStoredRecentTasks() {
+  try {
+    const raw = localStorage.getItem(RECENT_KEY);
+    return normalizeTaskSummaries(raw ? JSON.parse(raw) : []);
+  } catch (error) {
+    logSystem("本地最近任务读取失败", { error: error.message });
+    return [];
+  }
+}
+
+function normalizeTaskSummaries(tasks) {
+  return (Array.isArray(tasks) ? tasks : [])
+    .filter((task) => task && typeof task === "object" && task.task_id)
+    .map((task) => ({
+      task_id: String(task.task_id),
+      short_task_id: String(task.short_task_id || task.task_id).slice(0, 8),
+      title: String(task.title || task.request?.title || task.task_id),
+      task_type: String(task.task_type || task.request?.task_type || ""),
+      status: String(task.status || "unknown"),
+      created_at: String(task.created_at || ""),
+      updated_at: String(task.updated_at || task.created_at || ""),
+      phase2_artifact_count: Number(task.phase2_artifact_count || 0),
+      has_phase2_artifacts: Boolean(task.has_phase2_artifacts || Number(task.phase2_artifact_count || 0) > 0),
+    }));
+}
+
+function mergeTaskSummaries(tasks) {
+  const byId = new Map();
+  normalizeTaskSummaries(tasks).forEach((task) => {
+    if (!byId.has(task.task_id)) byId.set(task.task_id, task);
+  });
+  return [...byId.values()].sort((a, b) => (b.updated_at || b.created_at).localeCompare(a.updated_at || a.created_at));
+}
+
+function taskSummaryFromRecord(record) {
+  const phase2Files = Array.isArray(record.phase2_files) ? record.phase2_files : [];
+  const phase2Count = phase2Files.filter((file) => file?.is_phase2_artifact).length;
+  return {
+    task_id: record.task_id,
+    short_task_id: String(record.task_id || "").slice(0, 8),
+    title: record.request?.title || record.task_id,
+    task_type: record.request?.task_type || "",
+    status: record.status || "unknown",
+    created_at: record.created_at || "",
+    updated_at: record.updated_at || record.created_at || "",
+    phase2_artifact_count: phase2Count,
+    has_phase2_artifacts: phase2Count > 0,
+  };
+}
+
+function formatTaskTime(task) {
+  return task.updated_at || task.created_at || "no time";
+}
+
+function formatPhase2Flag(task) {
+  const count = Number(task.phase2_artifact_count || 0);
+  return count > 0 ? `Phase 2 files: ${count}` : "Phase 2 files: none";
 }
 
 function updateDraftButton() {
