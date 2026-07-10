@@ -34,20 +34,34 @@ def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
 
-def _read_required_object(path: Path) -> dict[str, Any]:
+def _read_input_object(path: Path, warnings: list[str]) -> dict[str, Any]:
     if not path.exists():
-        raise ValueError(f"Required report-planning input is missing: {path.name}")
+        warnings.append(f"{path.name} is missing; conservative fallback data was used.")
+        return {}
     try:
         payload = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise ValueError(f"Required report-planning input could not be read: {path.name}: {exc}") from exc
+        warnings.append(f"{path.name} could not be read; conservative fallback data was used: {exc}")
+        return {}
     if not isinstance(payload, dict):
-        raise ValueError(f"Required report-planning input must be a JSON object: {path.name}")
+        warnings.append(f"{path.name} is not a JSON object; conservative fallback data was used.")
+        return {}
     return payload
 
 
 def _source_id(source: dict[str, Any]) -> str:
     return str(source.get("source_id") or source.get("id") or "").strip()
+
+
+def _dedupe_key(source: dict[str, Any]) -> str:
+    url = str(source.get("normalized_url") or source.get("url") or "").strip().lower().rstrip("/")
+    if url:
+        return f"url:{url}"
+    title = " ".join(str(source.get("title") or "").split()).strip().lower()
+    if title:
+        return f"title:{title}"
+    source_id = _source_id(source)
+    return f"source_id:{source_id}" if source_id else ""
 
 
 def _review_status(review: dict[str, Any] | None) -> str:
@@ -140,6 +154,7 @@ def _build_outline(
     sources: dict[str, Any],
     research_notes: dict[str, Any],
     source_review: dict[str, Any],
+    input_warnings: list[str],
 ) -> dict[str, Any]:
     request = record.request
     active_reviews = [
@@ -163,16 +178,35 @@ def _build_outline(
     query_order = {query_id: index for index, query_id in enumerate(query_by_id)}
 
     evidence: list[dict[str, Any]] = []
+    unusable_sources: list[dict[str, Any]] = []
+    seen_source_keys: set[str] = set()
     for source_index, source in enumerate(_list_of_dicts(sources.get("items")), start=1):
         source_id = _source_id(source)
         if not source_id:
             continue
+        dedupe_key = _dedupe_key(source)
+        if dedupe_key and dedupe_key in seen_source_keys:
+            continue
+        if dedupe_key:
+            seen_source_keys.add(dedupe_key)
         stable_source_key = source_review_key(source, source_index)
         review = reviews_by_source_key.get(stable_source_key) or reviews_by_source_id.get(source_id, {})
         status = _review_status(review)
         if status not in ELIGIBLE_REVIEW_STATUSES:
             continue
         text, text_artifact, text_field, has_usable_text = _source_text(source, note_sources.get(source_id))
+        if not has_usable_text:
+            unusable_sources.append(
+                {
+                    "reason": "source_without_usable_text",
+                    "source_id": source_id,
+                    "source_key": str(review.get("source_key") or stable_source_key),
+                    "title": str(source.get("title") or "").strip(),
+                    "review_status": status,
+                    "provenance": _provenance(source_id, review, text_artifact, text_field),
+                }
+            )
+            continue
         query_id = str(source.get("query_id") or (note_sources.get(source_id) or {}).get("query_id") or "")
         query = query_by_id.get(query_id, {})
         purpose = str(query.get("purpose") or "evidence").strip() or "evidence"
@@ -259,6 +293,7 @@ def _build_outline(
         for source_id, review in reviews_by_source_id.items()
         if _review_status(review) == "needs_followup"
     ]
+    missing_information.extend(unusable_sources)
     if not sections:
         missing_information.append(
             {
@@ -300,6 +335,7 @@ def _build_outline(
                 "research_notes": research_notes.get("schema_version"),
                 "source_review": source_review.get("version"),
             },
+            "input_warnings": input_warnings,
         },
     }
 
@@ -343,11 +379,12 @@ def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
 
 def generate_report_outline(record: Any, workspace: Path) -> dict[str, Any]:
     research_dir = workspace / "research"
-    search_plan = _read_required_object(research_dir / "search_plan.json")
-    sources = _read_required_object(research_dir / "sources.json")
-    research_notes = _read_required_object(research_dir / "research_notes.json")
-    source_review = _read_required_object(research_dir / "source_review.json")
-    outline = _build_outline(record, search_plan, sources, research_notes, source_review)
+    input_warnings: list[str] = []
+    search_plan = _read_input_object(research_dir / "search_plan.json", input_warnings)
+    sources = _read_input_object(research_dir / "sources.json", input_warnings)
+    research_notes = _read_input_object(research_dir / "research_notes.json", input_warnings)
+    source_review = _read_input_object(research_dir / "source_review.json", input_warnings)
+    outline = _build_outline(record, search_plan, sources, research_notes, source_review, input_warnings)
     _validate_outline(outline)
     _atomic_write_json(report_outline_path(workspace), outline)
     return outline

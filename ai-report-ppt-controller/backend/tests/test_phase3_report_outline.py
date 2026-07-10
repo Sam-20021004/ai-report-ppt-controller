@@ -284,7 +284,7 @@ def test_queries_with_the_same_purpose_are_consolidated_into_one_section(tmp_pat
     ]
 
 
-def test_approved_source_without_usable_text_is_low_confidence(tmp_path: Path) -> None:
+def test_approved_source_without_usable_text_does_not_create_placeholder_section(tmp_path: Path) -> None:
     workspace, record = _workspace_with_sources(tmp_path, review_states={"s-approved": "approved"})
     sources_path = workspace / "research" / "sources.json"
     notes_path = workspace / "research" / "research_notes.json"
@@ -300,5 +300,53 @@ def test_approved_source_without_usable_text_is_low_confidence(tmp_path: Path) -
 
     outline = generate_report_outline(record, workspace)
 
-    assert outline["sections"][0]["confidence"] == "low"
+    assert outline["sections"] == []
+    assert any(item["reason"] == "source_without_usable_text" for item in outline["missing_information"])
+
+
+def test_missing_sources_file_produces_valid_empty_outline(tmp_path: Path) -> None:
+    workspace, record = _workspace_with_sources(tmp_path, review_states={"s-approved": "approved"})
+    (workspace / "research" / "sources.json").unlink()
+
+    outline = generate_report_outline(record, workspace)
+
+    assert outline["schema_version"] == "phase3.report_outline.v1"
+    assert outline["sections"] == []
+    assert any("sources.json is missing" in warning for warning in outline["provenance"]["input_warnings"])
+
+
+def test_malformed_sources_file_produces_valid_empty_outline(tmp_path: Path) -> None:
+    workspace, record = _workspace_with_sources(tmp_path, review_states={"s-approved": "approved"})
+    (workspace / "research" / "sources.json").write_text("{broken", encoding="utf-8")
+
+    outline = generate_report_outline(record, workspace)
+
+    assert outline["sections"] == []
+    assert any("sources.json could not be read" in warning for warning in outline["provenance"]["input_warnings"])
+
+
+def test_missing_notes_and_review_files_degrade_without_crashing(tmp_path: Path) -> None:
+    workspace, record = _workspace_with_sources(tmp_path, review_states={"s-approved": "approved"})
+    (workspace / "research" / "research_notes.json").unlink()
+    (workspace / "research" / "source_review.json").unlink()
+
+    outline = generate_report_outline(record, workspace)
+
+    assert len(outline["sections"]) == 1
     assert outline["sections"][0]["review_status"] == "needs_review"
+    assert outline["sections"][0]["supporting_sources"][0]["review_status"] == "unreviewed"
+    assert len(outline["provenance"]["input_warnings"]) == 2
+
+
+def test_duplicate_sources_are_not_repeated_in_supporting_sources(tmp_path: Path) -> None:
+    workspace, record = _workspace_with_sources(tmp_path, review_states={"s-approved": "approved"})
+    sources_path = workspace / "research" / "sources.json"
+    sources = json.loads(sources_path.read_text(encoding="utf-8"))
+    duplicate = {**sources["items"][0], "id": "s-duplicate", "source_id": "s-duplicate"}
+    sources["items"].append(duplicate)
+    _write_json(sources_path, sources)
+
+    outline = generate_report_outline(record, workspace)
+
+    assert len(outline["sections"]) == 1
+    assert [item["source_id"] for item in outline["sections"][0]["supporting_sources"]] == ["s-approved"]
