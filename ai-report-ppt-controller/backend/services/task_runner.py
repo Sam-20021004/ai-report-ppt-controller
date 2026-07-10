@@ -12,6 +12,7 @@ from backend.models.task import TaskRecord, TaskRequest, default_steps
 from backend.services.agent_adapters import make_codex_adapter, make_hermes_adapter, write_json
 from backend.services.phase2_artifacts import execute_phase2_search_plan, summarize_phase2_research, write_phase2_contract_artifacts
 from backend.services.phase2_records import build_file_metadata, sort_task_files
+from backend.services.report_planner import generate_report_outline
 from backend.services.security import HTTPException, safe_join
 
 
@@ -424,11 +425,26 @@ def run_workflow(task_id: str) -> TaskRecord:
 
     planner_errors = research_result.get("planner_errors") or []
     if request.task_type == "research_only":
+        def _summarize_and_plan() -> dict[str, Any]:
+            research_summary = summarize_phase2_research(
+                record,
+                workspace,
+                STORAGE_DIR,
+                task_dir(record.task_id),
+                planner_errors,
+            )
+            report_outline = generate_report_outline(record, workspace)
+            return {
+                **research_summary,
+                "report_outline_file": "draft/report_outline.json",
+                "report_outline_section_count": len(report_outline["sections"]),
+            }
+
         _run_step(
             record,
             4,
-            lambda: summarize_phase2_research(record, workspace, STORAGE_DIR, task_dir(record.task_id), planner_errors),
-            "Phase 2 research notes generated from sources.json.",
+            _summarize_and_plan,
+            "Phase 2 research notes and the traceable Phase 3 report outline were generated.",
         )
         for index in range(5, 10):
             _skip_step(record, index, "仅资料检索任务已跳过文档生成步骤。")
@@ -442,6 +458,7 @@ def run_workflow(task_id: str) -> TaskRecord:
 
     def _summarize_and_write() -> dict[str, Any]:
         research_summary = summarize_phase2_research(record, workspace, STORAGE_DIR, task_dir(record.task_id), planner_errors)
+        report_outline = generate_report_outline(record, workspace)
         writer = hermes.run_task("writer", writer_prompt, workspace, base_context)
         if writer.get("status") != "success":
             return writer
@@ -449,6 +466,8 @@ def run_workflow(task_id: str) -> TaskRecord:
         return {
             "status": "success",
             "research_summary": research_summary,
+            "report_outline_file": "draft/report_outline.json",
+            "report_outline_section_count": len(report_outline["sections"]),
             "writer_result": writer,
         }
 

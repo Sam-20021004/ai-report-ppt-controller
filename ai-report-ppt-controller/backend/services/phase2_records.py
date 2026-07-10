@@ -16,6 +16,14 @@ PHASE2_RESEARCH_ARTIFACTS = {
     "research/research_notes.json": "结构化研究备注与质量摘要",
 }
 
+PHASE3_DRAFT_ARTIFACTS = {
+    "draft/report_outline.json": {
+        "file_type": "report_outline",
+        "category": "phase3_draft",
+        "description": "Structured report outline derived from reviewed research artifacts",
+    }
+}
+
 
 def relative_to_storage(path: Path, storage_dir: Path) -> str:
     return path.resolve().relative_to(storage_dir.resolve()).as_posix()
@@ -28,18 +36,20 @@ def build_file_metadata(task_id: str, file_path: Path, storage_dir: Path, task_r
     except ValueError:
         relative_path = file_path.name
     is_phase2_artifact = relative_path in PHASE2_RESEARCH_ARTIFACTS
+    phase3_metadata = PHASE3_DRAFT_ARTIFACTS.get(relative_path, {})
     return {
         "file_id": relative_to_storage(file_path, storage_dir),
         "task_id": task_id,
         "file_name": file_path.name,
-        "file_type": file_path.suffix.lstrip(".") or "file",
+        "file_type": phase3_metadata.get("file_type") or file_path.suffix.lstrip(".") or "file",
         "relative_path": relative_path,
         "path": str(file_path),
         "size": stat.st_size,
         "created_at": now(),
         "updated_at": datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"),
-        "category": "phase2_research" if is_phase2_artifact else relative_path.split("/", 1)[0],
-        "description": PHASE2_RESEARCH_ARTIFACTS.get(relative_path, ""),
+        "category": phase3_metadata.get("category")
+        or ("phase2_research" if is_phase2_artifact else relative_path.split("/", 1)[0]),
+        "description": phase3_metadata.get("description") or PHASE2_RESEARCH_ARTIFACTS.get(relative_path, ""),
         "is_phase2_artifact": is_phase2_artifact,
     }
 
