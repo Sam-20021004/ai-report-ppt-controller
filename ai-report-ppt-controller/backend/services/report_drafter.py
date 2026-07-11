@@ -79,8 +79,10 @@ def _source_id(source: dict[str, Any]) -> str:
 
 
 def _review_status(review: dict[str, Any] | None) -> str:
-    status = _clean_text((review or {}).get("review_status"), 80) or "unreviewed"
-    return status if status in KNOWN_REVIEW_STATUSES else "unreviewed"
+    status = _clean_text((review or {}).get("review_status"), 80)
+    if not status:
+        return "unreviewed"
+    return status if status in KNOWN_REVIEW_STATUSES else "needs_followup"
 
 
 def _stable_append(values: list[str], value: str) -> None:
@@ -100,9 +102,12 @@ def _payload_sort_key(payload: dict[str, Any]) -> tuple[str, ...]:
     )
 
 
-def _source_indexes(sources: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+def _source_indexes(
+    sources: dict[str, Any],
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]], set[str]]:
     grouped_by_key: dict[str, list[dict[str, Any]]] = {}
     grouped_by_id: dict[str, list[dict[str, Any]]] = {}
+    keys_by_id: dict[str, set[str]] = {}
     for index, source in enumerate(_list_of_dicts(sources.get("items")), start=1):
         source_id = _source_id(source)
         key = source_review_key(source, index)
@@ -110,9 +115,20 @@ def _source_indexes(sources: dict[str, Any]) -> tuple[dict[str, dict[str, Any]],
             grouped_by_key.setdefault(key, []).append(source)
         if source_id:
             grouped_by_id.setdefault(source_id, []).append(source)
+            if key:
+                keys_by_id.setdefault(source_id, set()).add(key)
     by_key = {key: min(items, key=_payload_sort_key) for key, items in grouped_by_key.items()}
-    by_id = {source_id: min(items, key=_payload_sort_key) for source_id, items in grouped_by_id.items()}
-    return by_key, by_id
+    ambiguous_ids = {
+        source_id
+        for source_id in grouped_by_id
+        if len(keys_by_id.get(source_id, set())) > 1
+    }
+    by_id = {
+        source_id: min(items, key=_payload_sort_key)
+        for source_id, items in grouped_by_id.items()
+        if source_id not in ambiguous_ids
+    }
+    return by_key, by_id, ambiguous_ids
 
 
 def _review_indexes(
@@ -245,7 +261,7 @@ def _build_draft(
     reviews: dict[str, Any],
     input_warnings: list[dict[str, str]],
 ) -> dict[str, Any]:
-    sources_by_key, sources_by_id = _source_indexes(sources)
+    sources_by_key, sources_by_id, ambiguous_source_ids = _source_indexes(sources)
     reviews_by_key, reviews_by_id = _review_indexes(reviews, input_warnings)
     notes_by_key, notes_by_id, ambiguous_note_ids = _note_indexes(notes)
     sections: list[dict[str, Any]] = []
@@ -332,8 +348,11 @@ def _build_draft(
             if source_key in seen_section_keys:
                 continue
             seen_section_keys.add(source_key)
-            source = sources_by_key.get(source_key) or sources_by_id.get(outline_source_id)
-            review = reviews_by_key.get(source_key) or reviews_by_id.get(outline_source_id, {})
+            source = sources_by_key.get(source_key)
+            review = reviews_by_key.get(source_key)
+            if outline_source_id not in ambiguous_source_ids:
+                source = source or sources_by_id.get(outline_source_id)
+                review = review or reviews_by_id.get(outline_source_id)
             status = _review_status(review)
             if status not in BODY_REVIEW_STATUSES:
                 _stable_append(excluded_source_keys, source_key)
@@ -360,7 +379,7 @@ def _build_draft(
                 continue
             source_id = _source_id(source)
             note = notes_by_key.get(source_key)
-            if note is None and source_id in ambiguous_note_ids:
+            if note is None and (source_id in ambiguous_source_ids or source_id in ambiguous_note_ids):
                 item = _warning(
                     "ambiguous_note_source_id",
                     "research/research_notes.json",

@@ -573,3 +573,50 @@ def test_outline_section_without_identity_is_skipped_not_invented(tmp_path: Path
 
     assert [section["outline_section_id"] for section in draft["sections"]] == ["2"]
     assert any(item["code"] == "missing_outline_section_id" for item in draft["provenance"]["input_warnings"])
+
+
+def test_duplicate_source_id_does_not_borrow_approved_review_from_another_stable_key(tmp_path: Path) -> None:
+    workspace, record, _ = _workspace_with_report_inputs(tmp_path)
+    sources_path = workspace / "research" / "sources.json"
+    outline_path = workspace / "draft" / "report_outline.json"
+    sources = json.loads(sources_path.read_text(encoding="utf-8"))
+    duplicate = {
+        **sources["items"][0],
+        "title": "Distinct source sharing an identifier",
+        "url": "https://example.com/distinct-duplicate-id",
+        "normalized_url": "https://example.com/distinct-duplicate-id",
+        "snippet": "This distinct source has no review record and must remain a candidate.",
+    }
+    sources["items"].append(duplicate)
+    duplicate_key = source_review_key(duplicate, len(sources["items"]))
+    _write_json(sources_path, sources)
+
+    outline = json.loads(outline_path.read_text(encoding="utf-8"))
+    outline["sections"][0]["supporting_sources"] = [
+        {
+            "source_id": duplicate["source_id"],
+            "source_key": duplicate_key,
+            "title": duplicate["title"],
+            "url": duplicate["url"],
+            "review_status": "unreviewed",
+        }
+    ]
+    _write_json(outline_path, outline)
+
+    draft = generate_report_draft(record, workspace)
+
+    block = draft["sections"][0]["content_blocks"][0]
+    assert block["text"] == duplicate["snippet"]
+    assert block["claim_type"] == "candidate"
+    assert block["needs_manual_review"] is True
+
+
+def test_unknown_review_status_is_excluded_instead_of_treated_as_unreviewed(tmp_path: Path) -> None:
+    workspace, record, keys = _workspace_with_report_inputs(tmp_path)
+    _set_review_status(workspace, keys["s-approved"], "unexpected_status")
+
+    draft = generate_report_draft(record, workspace)
+
+    assert keys["s-approved"] not in draft["provenance"]["included_source_keys"]
+    assert keys["s-approved"] in draft["provenance"]["excluded_source_keys"]
+    assert all(keys["s-approved"] not in section["source_keys"] for section in draft["sections"])
