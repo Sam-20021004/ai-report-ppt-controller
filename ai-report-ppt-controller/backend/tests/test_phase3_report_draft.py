@@ -497,3 +497,55 @@ def test_input_warning_does_not_expose_absolute_local_path(tmp_path: Path, monke
 
     assert _read_object(path, "draft/report_outline.json", warnings) == {}
     assert "private" not in json.dumps(warnings)
+
+
+@pytest.mark.parametrize("reverse_records", [False, True])
+def test_conflicting_duplicate_reviews_use_restrictive_status_regardless_of_order(
+    tmp_path: Path,
+    reverse_records: bool,
+) -> None:
+    workspace, record, keys = _workspace_with_report_inputs(tmp_path)
+    review_path = workspace / "research" / "source_review.json"
+    reviews = json.loads(review_path.read_text(encoding="utf-8"))
+    approved = next(item for item in reviews["items"] if item["source_key"] == keys["s-approved"])
+    conflict = {**approved, "review_status": "rejected", "review_note": "Conflicting rejection."}
+    reviews["items"].append(conflict)
+    if reverse_records:
+        reviews["items"].reverse()
+    _write_json(review_path, reviews)
+
+    draft = generate_report_draft(record, workspace)
+
+    assert keys["s-approved"] not in draft["provenance"]["included_source_keys"]
+    assert keys["s-approved"] in draft["provenance"]["excluded_source_keys"]
+    assert any(item["code"] == "conflicting_review_status" for item in draft["provenance"]["input_warnings"])
+
+
+def test_notes_with_duplicate_source_id_match_by_stable_key_not_physical_order(tmp_path: Path) -> None:
+    workspace, record, _ = _workspace_with_report_inputs(tmp_path)
+    notes_path = workspace / "research" / "research_notes.json"
+    notes = json.loads(notes_path.read_text(encoding="utf-8"))
+    candidate_note = notes["source_groups"][1]["sources"][0]
+    candidate_note["source_id"] = "s-approved"
+    candidate_note["id"] = "s-approved"
+    notes["source_groups"].reverse()
+    _write_json(notes_path, notes)
+
+    draft = generate_report_draft(record, workspace)
+
+    approved_block = draft["sections"][0]["content_blocks"][0]
+    assert approved_block["text"] == "The reviewed source records the established device structure."
+    assert approved_block["supporting_sources"][0]["text_provenance"]["record_id"] == "s-approved"
+
+
+def test_outline_section_without_identity_is_skipped_not_invented(tmp_path: Path) -> None:
+    workspace, record, _ = _workspace_with_report_inputs(tmp_path)
+    outline_path = workspace / "draft" / "report_outline.json"
+    outline = json.loads(outline_path.read_text(encoding="utf-8"))
+    outline["sections"][0].pop("section_id")
+    _write_json(outline_path, outline)
+
+    draft = generate_report_draft(record, workspace)
+
+    assert [section["outline_section_id"] for section in draft["sections"]] == ["2"]
+    assert any(item["code"] == "missing_outline_section_id" for item in draft["provenance"]["input_warnings"])

@@ -15,6 +15,12 @@ REPORT_DRAFT_SCHEMA = "phase3.report_draft.v1"
 REPORT_OUTLINE_SCHEMA = "phase3.report_outline.v1"
 BODY_REVIEW_STATUSES = {"approved", "unreviewed"}
 KNOWN_REVIEW_STATUSES = {*BODY_REVIEW_STATUSES, "rejected", "needs_followup"}
+REVIEW_RESTRICTION_ORDER = {
+    "rejected": 0,
+    "needs_followup": 1,
+    "unreviewed": 2,
+    "approved": 3,
+}
 
 
 def report_draft_path(workspace: Path) -> Path:
@@ -82,42 +88,112 @@ def _stable_append(values: list[str], value: str) -> None:
         values.append(value)
 
 
+def _payload_sort_key(payload: dict[str, Any]) -> tuple[str, ...]:
+    return (
+        _source_id(payload),
+        _clean_text(payload.get("normalized_url") or payload.get("url"), 1200),
+        _clean_text(payload.get("title"), 500),
+        _clean_text(payload.get("preliminary_note")),
+        _clean_text(payload.get("snippet")),
+        _clean_text(payload.get("claim_supported")),
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str),
+    )
+
+
 def _source_indexes(sources: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
-    by_key: dict[str, dict[str, Any]] = {}
-    by_id: dict[str, dict[str, Any]] = {}
+    grouped_by_key: dict[str, list[dict[str, Any]]] = {}
+    grouped_by_id: dict[str, list[dict[str, Any]]] = {}
     for index, source in enumerate(_list_of_dicts(sources.get("items")), start=1):
         source_id = _source_id(source)
         key = source_review_key(source, index)
-        if key and key not in by_key:
-            by_key[key] = source
-        if source_id and source_id not in by_id:
-            by_id[source_id] = source
+        if key:
+            grouped_by_key.setdefault(key, []).append(source)
+        if source_id:
+            grouped_by_id.setdefault(source_id, []).append(source)
+    by_key = {key: min(items, key=_payload_sort_key) for key, items in grouped_by_key.items()}
+    by_id = {source_id: min(items, key=_payload_sort_key) for source_id, items in grouped_by_id.items()}
     return by_key, by_id
 
 
-def _review_indexes(reviews: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+def _review_indexes(
+    reviews: dict[str, Any],
+    warnings: list[dict[str, str]],
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
     active = [item for item in _list_of_dicts(reviews.get("items")) if not item.get("stale")]
+    grouped_by_key: dict[str, list[dict[str, Any]]] = {}
+    grouped_by_id: dict[str, list[dict[str, Any]]] = {}
+    for item in active:
+        key = _clean_text(item.get("source_key"), 160)
+        source_id = _clean_text(item.get("source_id"), 120)
+        if key:
+            grouped_by_key.setdefault(key, []).append(item)
+        if source_id:
+            grouped_by_id.setdefault(source_id, []).append(item)
+
+    warned_keys: set[str] = set()
+
+    def reconcile(identity: str, items: list[dict[str, Any]], *, source_key: str = "") -> dict[str, Any]:
+        statuses = {_review_status(item) for item in items}
+        if len(statuses) > 1 and source_key not in warned_keys:
+            warnings.append(
+                _warning(
+                    "conflicting_review_status",
+                    "research/source_review.json",
+                    "Conflicting active review records were resolved using the most restrictive status.",
+                    source_key=source_key,
+                )
+            )
+            if source_key:
+                warned_keys.add(source_key)
+        return min(
+            items,
+            key=lambda item: (
+                REVIEW_RESTRICTION_ORDER[_review_status(item)],
+                _payload_sort_key(item),
+                identity,
+            ),
+        )
+
     by_key = {
-        _clean_text(item.get("source_key"), 160): item
-        for item in active
-        if _clean_text(item.get("source_key"), 160)
+        key: reconcile(key, grouped_by_key[key], source_key=key)
+        for key in sorted(grouped_by_key)
     }
     by_id = {
-        _clean_text(item.get("source_id"), 120): item
-        for item in active
-        if _clean_text(item.get("source_id"), 120)
+        source_id: reconcile(
+            source_id,
+            grouped_by_id[source_id],
+            source_key=_clean_text(grouped_by_id[source_id][0].get("source_key"), 160),
+        )
+        for source_id in sorted(grouped_by_id)
     }
     return by_key, by_id
 
 
-def _note_index(notes: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    result: dict[str, dict[str, Any]] = {}
+def _note_indexes(
+    notes: dict[str, Any],
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]], set[str]]:
+    grouped_by_key: dict[str, list[dict[str, Any]]] = {}
+    grouped_by_id: dict[str, list[tuple[str, dict[str, Any]]]] = {}
+    note_index = 0
     for group in _list_of_dicts(notes.get("source_groups")):
         for source in _list_of_dicts(group.get("sources")):
+            note_index += 1
             source_id = _source_id(source)
-            if source_id and source_id not in result:
-                result[source_id] = source
-    return result
+            key = source_review_key(source, note_index)
+            if key:
+                grouped_by_key.setdefault(key, []).append(source)
+            if source_id:
+                grouped_by_id.setdefault(source_id, []).append((key, source))
+    by_key = {key: min(items, key=_payload_sort_key) for key, items in grouped_by_key.items()}
+    by_id: dict[str, dict[str, Any]] = {}
+    ambiguous_ids: set[str] = set()
+    for source_id, entries in grouped_by_id.items():
+        keys = {key for key, _ in entries if key}
+        if len(keys) > 1:
+            ambiguous_ids.add(source_id)
+            continue
+        by_id[source_id] = min((source for _, source in entries), key=_payload_sort_key)
+    return by_key, by_id, ambiguous_ids
 
 
 def _select_text(
@@ -163,8 +239,8 @@ def _build_draft(
     input_warnings: list[dict[str, str]],
 ) -> dict[str, Any]:
     sources_by_key, sources_by_id = _source_indexes(sources)
-    reviews_by_key, reviews_by_id = _review_indexes(reviews)
-    notes_by_id = _note_index(notes)
+    reviews_by_key, reviews_by_id = _review_indexes(reviews, input_warnings)
+    notes_by_key, notes_by_id, ambiguous_note_ids = _note_indexes(notes)
     sections: list[dict[str, Any]] = []
     source_index_by_key: dict[str, dict[str, Any]] = {}
     included_source_keys: list[str] = []
@@ -192,9 +268,18 @@ def _build_draft(
                 )
             )
             continue
+        outline_section_id = _clean_text(outline_section.get("section_id"), 120)
+        if not outline_section_id:
+            item = _warning(
+                "missing_outline_section_id",
+                "draft/report_outline.json",
+                f"Outline section at position {raw_position} has no section_id and was skipped.",
+            )
+            input_warnings.append(item)
+            all_warnings.append(item)
+            continue
         section_order = len(sections) + 1
         section_id = f"section-{section_order:03d}"
-        outline_section_id = _clean_text(outline_section.get("section_id"), 120) or str(raw_position)
         section_warnings: list[dict[str, str]] = []
         blocks: list[dict[str, Any]] = []
         section_sources: list[dict[str, Any]] = []
@@ -267,7 +352,20 @@ def _build_draft(
                 all_warnings.append(item)
                 continue
             source_id = _source_id(source)
-            text, text_provenance = _select_text(source, notes_by_id.get(source_id))
+            note = notes_by_key.get(source_key)
+            if note is None and source_id in ambiguous_note_ids:
+                item = _warning(
+                    "ambiguous_note_source_id",
+                    "research/research_notes.json",
+                    "Multiple research-note sources share this source_id; source-id fallback was not used.",
+                    section_id=outline_section_id,
+                    source_key=source_key,
+                )
+                section_warnings.append(item)
+                all_warnings.append(item)
+            elif note is None:
+                note = notes_by_id.get(source_id)
+            text, text_provenance = _select_text(source, note)
             if not text or text_provenance is None:
                 item = _warning(
                     "source_without_usable_text",
@@ -393,7 +491,10 @@ def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
         os.replace(temp_path, path)
     finally:
         if temp_path is not None and temp_path.exists():
-            temp_path.unlink()
+            try:
+                temp_path.unlink()
+            except OSError:
+                pass
 
 
 def generate_report_draft(record: Any, workspace: Path) -> dict[str, Any]:
