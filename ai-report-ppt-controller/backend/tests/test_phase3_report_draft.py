@@ -285,6 +285,7 @@ def test_invalid_section_does_not_discard_other_outline_sections(tmp_path: Path)
     draft = generate_report_draft(record, workspace)
 
     assert [section["outline_section_id"] for section in draft["sections"]] == ["1", "2"]
+    assert any(item["code"] == "invalid_outline_section" for item in draft["provenance"]["input_warnings"])
     assert any(item["code"] == "invalid_outline_section" for item in draft["warnings"])
 
 
@@ -519,6 +520,29 @@ def test_conflicting_duplicate_reviews_use_restrictive_status_regardless_of_orde
     assert keys["s-approved"] not in draft["provenance"]["included_source_keys"]
     assert keys["s-approved"] in draft["provenance"]["excluded_source_keys"]
     assert any(item["code"] == "conflicting_review_status" for item in draft["provenance"]["input_warnings"])
+
+
+def test_duplicate_review_id_warning_uses_deterministic_source_key(tmp_path: Path) -> None:
+    workspace, record, keys = _workspace_with_report_inputs(tmp_path)
+    review_path = workspace / "research" / "source_review.json"
+    reviews = json.loads(review_path.read_text(encoding="utf-8"))
+    approved = next(item for item in reviews["items"] if item["source_key"] == keys["s-approved"])
+    reviews["items"].extend(
+        [
+            {**approved, "source_key": "z-key", "review_status": "approved"},
+            {**approved, "source_key": "a-key", "review_status": "rejected"},
+        ]
+    )
+    _write_json(review_path, reviews)
+
+    draft = generate_report_draft(record, workspace)
+
+    warnings = [
+        item
+        for item in draft["provenance"]["input_warnings"]
+        if item["code"] == "conflicting_review_status" and item.get("source_key") == "a-key"
+    ]
+    assert warnings
 
 
 def test_notes_with_duplicate_source_id_match_by_stable_key_not_physical_order(tmp_path: Path) -> None:

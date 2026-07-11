@@ -162,7 +162,14 @@ def _review_indexes(
         source_id: reconcile(
             source_id,
             grouped_by_id[source_id],
-            source_key=_clean_text(grouped_by_id[source_id][0].get("source_key"), 160),
+            source_key=min(
+                (
+                    key
+                    for item in grouped_by_id[source_id]
+                    if (key := _clean_text(item.get("source_key"), 160))
+                ),
+                default="",
+            ),
         )
         for source_id in sorted(grouped_by_id)
     }
@@ -260,13 +267,13 @@ def _build_draft(
         raw_sections = []
     for raw_position, outline_section in enumerate(raw_sections, start=1):
         if not isinstance(outline_section, dict):
-            all_warnings.append(
-                _warning(
-                    "invalid_outline_section",
-                    "draft/report_outline.json",
-                    f"Outline section at position {raw_position} is not an object and was skipped.",
-                )
+            item = _warning(
+                "invalid_outline_section",
+                "draft/report_outline.json",
+                f"Outline section at position {raw_position} is not an object and was skipped.",
             )
+            input_warnings.append(item)
+            all_warnings.append(item)
             continue
         outline_section_id = _clean_text(outline_section.get("section_id"), 120)
         if not outline_section_id:
