@@ -12,6 +12,7 @@ from backend.models.task import TaskRecord, TaskRequest, default_steps
 from backend.services.agent_adapters import make_codex_adapter, make_hermes_adapter, write_json
 from backend.services.phase2_artifacts import execute_phase2_search_plan, summarize_phase2_research, write_phase2_contract_artifacts
 from backend.services.phase2_records import build_file_metadata, sort_task_files
+from backend.services.report_drafter import generate_report_draft
 from backend.services.report_planner import generate_report_outline
 from backend.services.security import HTTPException, safe_join
 
@@ -434,10 +435,16 @@ def run_workflow(task_id: str) -> TaskRecord:
                 planner_errors,
             )
             report_outline = generate_report_outline(record, workspace)
+            report_draft = generate_report_draft(record, workspace)
             return {
                 **research_summary,
                 "report_outline_file": "draft/report_outline.json",
                 "report_outline_section_count": len(report_outline["sections"]),
+                "report_draft_file": "draft/report_draft.json",
+                "report_draft_section_count": len(report_draft["sections"]),
+                "report_draft_block_count": sum(
+                    len(section["content_blocks"]) for section in report_draft["sections"]
+                ),
             }
 
         _run_step(
@@ -459,6 +466,7 @@ def run_workflow(task_id: str) -> TaskRecord:
     def _summarize_and_write() -> dict[str, Any]:
         research_summary = summarize_phase2_research(record, workspace, STORAGE_DIR, task_dir(record.task_id), planner_errors)
         report_outline = generate_report_outline(record, workspace)
+        report_draft = generate_report_draft(record, workspace)
         writer = hermes.run_task("writer", writer_prompt, workspace, base_context)
         if writer.get("status") != "success":
             return writer
@@ -468,6 +476,11 @@ def run_workflow(task_id: str) -> TaskRecord:
             "research_summary": research_summary,
             "report_outline_file": "draft/report_outline.json",
             "report_outline_section_count": len(report_outline["sections"]),
+            "report_draft_file": "draft/report_draft.json",
+            "report_draft_section_count": len(report_draft["sections"]),
+            "report_draft_block_count": sum(
+                len(section["content_blocks"]) for section in report_draft["sections"]
+            ),
             "writer_result": writer,
         }
 

@@ -21,7 +21,12 @@ PHASE3_DRAFT_ARTIFACTS = {
         "file_type": "report_outline",
         "category": "phase3_draft",
         "description": "Structured report outline derived from reviewed research artifacts",
-    }
+    },
+    "draft/report_draft.json": {
+        "file_type": "report_draft",
+        "category": "phase3_draft",
+        "description": "Structured report section draft derived from reviewed research artifacts",
+    },
 }
 
 
