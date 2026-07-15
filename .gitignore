@@ -16,6 +16,7 @@ dist/
 build/
 .cache/
 .vite/
+.worktrees/
 
 *.log
 .DS_Store
