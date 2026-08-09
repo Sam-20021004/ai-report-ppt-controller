@@ -572,3 +572,12 @@ def make_codex_adapter(settings: AppConfig | None = None) -> AgentAdapter:
     if config.codex_mode == "cli":
         return CodexCLIAdapter(config)
     return MockCodexAdapter()
+
+
+def make_chatgpt_adapter(settings: AppConfig | None = None) -> AgentAdapter:
+    from backend.services.chatgpt_adapter import ChatGPTAdapter, MockChatGPTAdapter
+
+    config = settings or get_settings()
+    if config.chatgpt_mode == "cdp":
+        return ChatGPTAdapter(config)
+    return MockChatGPTAdapter()

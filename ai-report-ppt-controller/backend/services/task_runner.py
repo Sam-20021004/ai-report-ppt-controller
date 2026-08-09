@@ -9,7 +9,12 @@ from typing import Any
 
 from backend.config import STORAGE_DIR, get_settings
 from backend.models.task import TaskRecord, TaskRequest, default_steps
-from backend.services.agent_adapters import make_codex_adapter, make_hermes_adapter, write_json
+from backend.services.agent_adapters import (
+    make_chatgpt_adapter,
+    make_codex_adapter,
+    make_hermes_adapter,
+    write_json,
+)
 from backend.services.phase2_artifacts import execute_phase2_search_plan, summarize_phase2_research, write_phase2_contract_artifacts
 from backend.services.phase2_records import build_file_metadata, sort_task_files
 from backend.services.report_drafter import generate_report_draft
@@ -287,6 +292,45 @@ def _planner_prompt(request: TaskRequest) -> str:
     )
 
 
+def _chatgpt_planner_prompt(request: TaskRequest) -> str:
+    """方案2：让 ChatGPT 网页版生成任务规划。
+
+    ChatGPT 只做规划（输出 JSON），不接触本地文件。下游 Hermes 负责
+    实际检索、清洗与文档构建。
+    """
+    request_text = _render_user_request(request)
+    return (
+        "你是报告生产工作流的规划器。请仅根据下面的用户任务，生成一份结构化 JSON 规划。\n"
+        "要求：\n"
+        "1. 只输出一个 JSON 对象，不要输出任何其他文字、解释或 markdown 代码块标记（不要用 ```）。\n"
+        "2. JSON 结构固定如下：\n"
+        "{\n"
+        '  "task_understanding": "对任务的简要理解（1-2句）",\n'
+        '  "outline": [{"section": "章节标题", "goal": "该章节要解决的问题"}],\n'
+        '  "search_questions": ["搜索问题1", "搜索问题2", "搜索问题3"],\n'
+        '  "figures_needed": ["需要的图/表1"],\n'
+        '  "risks": ["风险1"],\n'
+        '  "success_criteria": ["验收标准1"],\n'
+        '  "language": "报告语言"\n'
+        "}\n"
+        "3. outline 的章节数根据任务复杂度决定（3-6 节），每节必须能独立成章。\n"
+        "4. search_questions 要具体、可执行，覆盖技术现状、竞争格局、风险三类。\n\n"
+        "用户任务如下：\n\n"
+        f"{request_text}\n\n"
+        "请直接输出 JSON："
+    )
+
+
+def _resolve_planner_result(planner_result: dict, use_chatgpt: bool) -> dict:
+    """把 planner 适配器返回的结果归一化为规划 dict。"""
+    result = planner_result.get("result", {})
+    if not use_chatgpt:
+        return result if isinstance(result, dict) else {}
+    if isinstance(result, dict) and isinstance(result.get("result"), dict):
+        return result["result"]
+    return result if isinstance(result, dict) else {}
+
+
 def _writer_prompt(request: TaskRequest) -> str:
     return _prompt_header(request, "Hermes Writer") + (
         "Read draft/outline.json and research/sources.json, then generate content.md and slides_storyboard.json.\n"
@@ -382,15 +426,27 @@ def run_workflow(task_id: str) -> TaskRecord:
     planner_prompt = _planner_prompt(request)
     _write_text(workspace / "prompts" / "hermes_planner.md", planner_prompt)
 
-    planner_result = _run_step(
-        record,
-        2,
-        lambda: hermes.run_task("planner", planner_prompt, workspace, base_context),
-        "Hermes Planner 已生成 outline.json 和 search_queries.json。",
-    )
+    use_chatgpt_planner = settings.planner_mode == "chatgpt"
+    if use_chatgpt_planner:
+        chatgpt = make_chatgpt_adapter(settings)
+        chatgpt_prompt = _chatgpt_planner_prompt(request)
+        _write_text(workspace / "prompts" / "chatgpt_planner.md", chatgpt_prompt)
+        planner_result = _run_step(
+            record,
+            2,
+            lambda: chatgpt.run_task("planner", chatgpt_prompt, workspace, base_context),
+            "ChatGPT Planner 已生成 outline.json 和 search_queries.json。",
+        )
+    else:
+        planner_result = _run_step(
+            record,
+            2,
+            lambda: hermes.run_task("planner", planner_prompt, workspace, base_context),
+            "Hermes Planner 已生成 outline.json 和 search_queries.json。",
+        )
     if planner_result.get("status") != "success":
-        raise RuntimeError(planner_result.get("error") or "Hermes planner failed.")
-    planner = planner_result.get("result", {})
+        raise RuntimeError(planner_result.get("error") or "Planner failed.")
+    planner = _resolve_planner_result(planner_result, use_chatgpt_planner)
     _write_planner_artifacts(workspace, planner)
     phase2_contract = write_phase2_contract_artifacts(record, workspace, STORAGE_DIR, task_dir(record.task_id))
     record.steps[1].output_summary = "Planner artifacts and structured Phase 2 search plan generated."
