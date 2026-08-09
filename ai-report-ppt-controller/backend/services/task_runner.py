@@ -17,6 +17,7 @@ from backend.services.agent_adapters import (
 )
 from backend.services.phase2_artifacts import execute_phase2_search_plan, summarize_phase2_research, write_phase2_contract_artifacts
 from backend.services.phase2_records import build_file_metadata, sort_task_files
+from backend.services.planner_service import run_planner
 from backend.services.report_drafter import generate_report_draft
 from backend.services.report_planner import generate_report_outline
 from backend.services.security import HTTPException, safe_join
@@ -321,16 +322,6 @@ def _chatgpt_planner_prompt(request: TaskRequest) -> str:
     )
 
 
-def _resolve_planner_result(planner_result: dict, use_chatgpt: bool) -> dict:
-    """把 planner 适配器返回的结果归一化为规划 dict。"""
-    result = planner_result.get("result", {})
-    if not use_chatgpt:
-        return result if isinstance(result, dict) else {}
-    if isinstance(result, dict) and isinstance(result.get("result"), dict):
-        return result["result"]
-    return result if isinstance(result, dict) else {}
-
-
 def _writer_prompt(request: TaskRequest) -> str:
     return _prompt_header(request, "Hermes Writer") + (
         "Read draft/outline.json and research/sources.json, then generate content.md and slides_storyboard.json.\n"
@@ -427,31 +418,35 @@ def run_workflow(task_id: str) -> TaskRecord:
     _write_text(workspace / "prompts" / "hermes_planner.md", planner_prompt)
 
     use_chatgpt_planner = settings.planner_mode == "chatgpt"
+    chatgpt_prompt = _chatgpt_planner_prompt(request)
     if use_chatgpt_planner:
         chatgpt = make_chatgpt_adapter(settings)
-        chatgpt_prompt = _chatgpt_planner_prompt(request)
         _write_text(workspace / "prompts" / "chatgpt_planner.md", chatgpt_prompt)
-        planner_result = _run_step(
-            record,
-            2,
-            lambda: chatgpt.run_task("planner", chatgpt_prompt, workspace, base_context),
-            "ChatGPT Planner 已生成 outline.json 和 search_queries.json。",
-        )
     else:
-        planner_result = _run_step(
-            record,
-            2,
-            lambda: hermes.run_task("planner", planner_prompt, workspace, base_context),
-            "Hermes Planner 已生成 outline.json 和 search_queries.json。",
-        )
-    if planner_result.get("status") != "success":
-        raise RuntimeError(planner_result.get("error") or "Planner failed.")
-    planner = _resolve_planner_result(planner_result, use_chatgpt_planner)
+        chatgpt = hermes
+
+    planner_execution = _run_step(
+        record,
+        2,
+        lambda: run_planner(
+            requested_mode=settings.planner_mode,
+            chatgpt=chatgpt,
+            hermes=hermes,
+            chatgpt_prompt=chatgpt_prompt,
+            hermes_prompt=planner_prompt,
+            workspace=workspace,
+            context=base_context,
+        ).model_dump(),
+        "Planner Service 已生成并验证 outline.json 和 search_queries.json。",
+    )
+    planner = planner_execution["plan"]
+    planner_trace = planner_execution["trace"]
     _write_planner_artifacts(workspace, planner)
     phase2_contract = write_phase2_contract_artifacts(record, workspace, STORAGE_DIR, task_dir(record.task_id))
     record.steps[1].output_summary = "Planner artifacts and structured Phase 2 search plan generated."
     record.steps[1].output = {
-        "planner_result": planner_result,
+        "planner_result": {"status": "success", "result": planner},
+        "planner_trace": planner_trace,
         "phase2_contract": {
             "files": [item["file_name"] for item in phase2_contract["phase2_files"]],
             "query_count": len(phase2_contract["search_plan"].get("queries") or []),
