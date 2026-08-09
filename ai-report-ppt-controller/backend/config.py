@@ -27,6 +27,14 @@ class AppConfig(BaseModel):
     codex_command: str = Field(default_factory=lambda: os.getenv("CODEX_COMMAND", "codex"))
     codex_mode: Literal["mock", "cli"] = Field(default_factory=lambda: os.getenv("CODEX_MODE", "mock"))
     codex_exec_args: str = Field(default_factory=lambda: os.getenv("CODEX_EXEC_ARGS", "exec"))
+    codex_diagnostic_timeout_s: int = Field(
+        default_factory=lambda: int(os.getenv("CODEX_DIAGNOSTIC_TIMEOUT_S", "300")),
+        ge=30,
+        le=900,
+    )
+    workflow_profile: Literal["legacy", "three_agent_v2"] = Field(
+        default_factory=lambda: os.getenv("WORKFLOW_PROFILE", "three_agent_v2")
+    )
     codex_test_prompt: str = "Return OK only."
     hermes_command: str = Field(default_factory=lambda: os.getenv("HERMES_COMMAND", "hermes"))
     hermes_endpoint: str = Field(default_factory=lambda: os.getenv("HERMES_ENDPOINT", ""))
