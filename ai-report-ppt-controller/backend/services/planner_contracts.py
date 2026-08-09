@@ -66,18 +66,20 @@ class PlannerTrace(BaseModel):
     schema_version: str = "planner.trace.v1"
     requested_mode: Literal["chatgpt", "hermes"]
     primary_planner: PlannerName
-    selected_planner: PlannerName
+    selected_planner: PlannerName | None
     fallback_used: bool
     fallback_reason_code: str | None = None
     fallback_reason: str | None = None
     attempts: list[PlannerAttempt] = Field(min_length=1, max_length=2)
     started_at: str | None = None
     completed_at: str | None = None
-    plan_sha256: str
+    plan_sha256: str | None
 
     @field_validator("plan_sha256")
     @classmethod
-    def validate_sha256(cls, value: str) -> str:
+    def validate_sha256(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         normalized = value.lower()
         if re.fullmatch(r"[0-9a-f]{64}", normalized) is None:
             raise ValueError("plan_sha256 must be a 64-character hexadecimal SHA-256 value.")
@@ -85,7 +87,16 @@ class PlannerTrace(BaseModel):
 
     @model_validator(mode="after")
     def validate_fallback_state(self) -> "PlannerTrace":
-        expected_fallback = self.requested_mode == "chatgpt" and self.selected_planner == "hermes"
+        if self.selected_planner is None:
+            if self.plan_sha256 is not None:
+                raise ValueError("plan_sha256 must be empty when no planner succeeded.")
+            expected_fallback = self.requested_mode == "chatgpt" and any(
+                attempt.planner == "hermes" for attempt in self.attempts
+            )
+        else:
+            if self.plan_sha256 is None:
+                raise ValueError("plan_sha256 is required when a planner succeeded.")
+            expected_fallback = self.requested_mode == "chatgpt" and self.selected_planner == "hermes"
         if self.fallback_used != expected_fallback:
             raise ValueError("fallback_used does not match the requested and selected planners.")
         if self.fallback_used and not self.fallback_reason_code:
