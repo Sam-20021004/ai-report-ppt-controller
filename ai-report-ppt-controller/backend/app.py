@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.config import get_settings
-from backend.routers import check, config, download, health, task, upload
+from backend.routers import check, config, download, health, role_baseline, task, upload
 
 
 def create_app() -> FastAPI:
@@ -24,6 +24,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(config.router)
     app.include_router(check.router)
+    app.include_router(role_baseline.router)
     app.include_router(task.router)
     app.include_router(upload.router)
     app.include_router(download.router)

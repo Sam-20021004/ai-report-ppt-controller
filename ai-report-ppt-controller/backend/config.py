@@ -6,7 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictInt
 
 
 ROOT_DIR = Path(__file__).resolve().parent
@@ -27,7 +27,7 @@ class AppConfig(BaseModel):
     codex_command: str = Field(default_factory=lambda: os.getenv("CODEX_COMMAND", "codex"))
     codex_mode: Literal["mock", "cli"] = Field(default_factory=lambda: os.getenv("CODEX_MODE", "mock"))
     codex_exec_args: str = Field(default_factory=lambda: os.getenv("CODEX_EXEC_ARGS", "exec"))
-    codex_diagnostic_timeout_s: int = Field(
+    codex_diagnostic_timeout_s: StrictInt = Field(
         default_factory=lambda: int(os.getenv("CODEX_DIAGNOSTIC_TIMEOUT_S", "300")),
         ge=30,
         le=900,

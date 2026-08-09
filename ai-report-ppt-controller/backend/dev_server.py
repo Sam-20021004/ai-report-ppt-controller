@@ -31,6 +31,7 @@ from backend.config import AppConfig
 from backend.models.task import TaskRequest
 from backend.services.agent_adapters import make_chatgpt_adapter
 from backend.services.phase2_artifacts import build_phase2_audit_review, load_source_review, save_source_review_updates
+from backend.services.role_baseline_service import run_role_baseline
 from backend.services.task_runner import (
     create_task as workflow_create_task,
     list_task_summaries as workflow_list_task_summaries,
@@ -71,6 +72,8 @@ DEFAULT_CONFIG = {
     "codex_command": os.getenv("CODEX_COMMAND", "codex"),
     "codex_mode": os.getenv("CODEX_MODE", "mock"),
     "codex_exec_args": os.getenv("CODEX_EXEC_ARGS", "exec"),
+    "codex_diagnostic_timeout_s": int(os.getenv("CODEX_DIAGNOSTIC_TIMEOUT_S", "300")),
+    "workflow_profile": os.getenv("WORKFLOW_PROFILE", "three_agent_v2"),
     "codex_test_prompt": "Return OK only.",
     "hermes_command": os.getenv("HERMES_COMMAND", "hermes"),
     "hermes_endpoint": os.getenv("HERMES_ENDPOINT", ""),
@@ -116,6 +119,14 @@ def load_config() -> dict:
 
 def validate_config_patch(patch: dict) -> dict:
     normalized = {key: value for key, value in patch.items() if key in DEFAULT_CONFIG}
+    workflow_profile = normalized.get("workflow_profile")
+    if workflow_profile is not None and workflow_profile not in {"legacy", "three_agent_v2"}:
+        raise ValueError("workflow_profile must be 'legacy' or 'three_agent_v2'.")
+    codex_timeout = normalized.get("codex_diagnostic_timeout_s")
+    if codex_timeout is not None and (
+        type(codex_timeout) is not int or not 30 <= codex_timeout <= 900
+    ):
+        raise ValueError("codex_diagnostic_timeout_s must be an integer from 30 through 900.")
     planner_mode = normalized.get("planner_mode")
     if planner_mode is not None and planner_mode not in {"hermes", "chatgpt"}:
         raise ValueError("planner_mode must be 'hermes' or 'chatgpt'.")
@@ -511,6 +522,16 @@ class Handler(BaseHTTPRequestHandler):
                 return json_response(self, 200, save_config(read_json(self)))
             except ValueError as exc:
                 return json_response(self, 422, {"error": "Invalid config", "detail": str(exc)})
+        if path == "/api/check/role-baseline":
+            settings = AppConfig(**load_config())
+            return json_response(
+                self,
+                200,
+                run_role_baseline(
+                    settings,
+                    STORAGE_ROOT / "workspace" / "diagnostics",
+                ),
+            )
         if path == "/api/check/codex":
             return json_response(self, 200, check_command("codex", config["codex_command"], {"codex"}))
         if path == "/api/check/hermes":
