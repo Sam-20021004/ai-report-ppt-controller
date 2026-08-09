@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import socket
 import subprocess
 import time
 import urllib.error
@@ -92,12 +93,32 @@ class HermesAPIAdapter(AgentAdapter):
                 "raw_output": mask_sensitive(raw),
                 "elapsed_ms": int((time.perf_counter() - started) * 1000),
             }
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        except urllib.error.HTTPError as exc:
+            error_code = "hermes_auth_failed" if exc.code in {401, 403} else "hermes_failed"
             return {
                 "name": "hermes",
                 "ok": False,
                 "status": "failed",
-                "detail": f"Hermes API health check failed: {exc}",
+                "error_code": error_code,
+                "detail": "Hermes API health check failed.",
+                "elapsed_ms": int((time.perf_counter() - started) * 1000),
+            }
+        except (TimeoutError, socket.timeout):
+            return {
+                "name": "hermes",
+                "ok": False,
+                "status": "failed",
+                "error_code": "hermes_timeout",
+                "detail": "Hermes API health check timed out.",
+                "elapsed_ms": int((time.perf_counter() - started) * 1000),
+            }
+        except (urllib.error.URLError, OSError):
+            return {
+                "name": "hermes",
+                "ok": False,
+                "status": "failed",
+                "error_code": "hermes_bridge_unavailable",
+                "detail": "Hermes API bridge is unavailable.",
                 "elapsed_ms": int((time.perf_counter() - started) * 1000),
             }
 
@@ -109,7 +130,15 @@ class HermesAPIAdapter(AgentAdapter):
         extra_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if not self.settings.hermes_endpoint:
-            raise RuntimeError("HERMES_ENDPOINT is not configured.")
+            return {
+                "status": "failed",
+                "task_name": task_name,
+                "result": None,
+                "error_code": "hermes_bridge_unavailable",
+                "error": "Hermes endpoint is not configured.",
+                "elapsed_ms": 0,
+                "log_file": None,
+            }
 
         payload = {
             "task_name": task_name,
@@ -129,6 +158,8 @@ class HermesAPIAdapter(AgentAdapter):
             with urllib.request.urlopen(request, timeout=300) as response:
                 raw = response.read().decode("utf-8", errors="replace")
             parsed = json.loads(raw) if raw else {}
+            if not isinstance(parsed, dict):
+                raise ValueError("Hermes bridge response must be a JSON object.")
             log_path = workspace / "logs" / f"hermes_{task_name}.log"
             log_path.parent.mkdir(parents=True, exist_ok=True)
             log_path.write_text(mask_sensitive(raw), encoding="utf-8")
@@ -136,15 +167,51 @@ class HermesAPIAdapter(AgentAdapter):
                 "status": "success",
                 "task_name": task_name,
                 "result": parsed,
+                "error_code": None,
+                "error": None,
                 "elapsed_ms": int((time.perf_counter() - started) * 1000),
-                "log_file": str(log_path),
+                "log_file": log_path.relative_to(workspace).as_posix(),
             }
-        except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+        except urllib.error.HTTPError as exc:
+            error_code = "hermes_auth_failed" if exc.code in {401, 403} else "hermes_failed"
             return {
                 "status": "failed",
                 "task_name": task_name,
-                "error": str(exc),
+                "result": None,
+                "error_code": error_code,
+                "error": "Hermes bridge returned an HTTP error.",
                 "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                "log_file": None,
+            }
+        except (TimeoutError, socket.timeout):
+            return {
+                "status": "failed",
+                "task_name": task_name,
+                "result": None,
+                "error_code": "hermes_timeout",
+                "error": "Hermes bridge request timed out.",
+                "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                "log_file": None,
+            }
+        except (json.JSONDecodeError, ValueError):
+            return {
+                "status": "failed",
+                "task_name": task_name,
+                "result": None,
+                "error_code": "hermes_invalid_result",
+                "error": "Hermes bridge returned an invalid result.",
+                "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                "log_file": None,
+            }
+        except (urllib.error.URLError, OSError):
+            return {
+                "status": "failed",
+                "task_name": task_name,
+                "result": None,
+                "error_code": "hermes_bridge_unavailable",
+                "error": "Hermes bridge is unavailable.",
+                "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                "log_file": None,
             }
 
 
