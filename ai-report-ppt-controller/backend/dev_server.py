@@ -27,7 +27,9 @@ DEFAULT_PORT = int(os.getenv("APP_PORT", "7860"))
 
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from backend.config import AppConfig
 from backend.models.task import TaskRequest
+from backend.services.agent_adapters import make_chatgpt_adapter
 from backend.services.phase2_artifacts import build_phase2_audit_review, load_source_review, save_source_review_updates
 from backend.services.task_runner import (
     create_task as workflow_create_task,
@@ -77,6 +79,10 @@ DEFAULT_CONFIG = {
     "hermes_run_path": os.getenv("HERMES_RUN_PATH", "/run"),
     "hermes_mode": os.getenv("HERMES_MODE", "mock"),
     "hermes_test_prompt": "Return OK only.",
+    "chatgpt_mode": os.getenv("CHATGPT_MODE", "mock"),
+    "chatgpt_use_new_chat": os.getenv("CHATGPT_USE_NEW_CHAT", "1") == "1",
+    "chatgpt_reply_timeout_s": int(os.getenv("CHATGPT_REPLY_TIMEOUT_S", "600")),
+    "planner_mode": os.getenv("PLANNER_MODE", "hermes"),
     "chrome_host": os.getenv("CHROME_CDP_HOST", "127.0.0.1"),
     "chrome_port": int(os.getenv("CHROME_CDP_PORT", "9222")),
     "pass_score": int(os.getenv("PASS_SCORE", "85")),
@@ -108,11 +114,26 @@ def load_config() -> dict:
     return {**DEFAULT_CONFIG, **data}
 
 
+def validate_config_patch(patch: dict) -> dict:
+    normalized = {key: value for key, value in patch.items() if key in DEFAULT_CONFIG}
+    planner_mode = normalized.get("planner_mode")
+    if planner_mode is not None and planner_mode not in {"hermes", "chatgpt"}:
+        raise ValueError("planner_mode must be 'hermes' or 'chatgpt'.")
+    chatgpt_mode = normalized.get("chatgpt_mode")
+    if chatgpt_mode is not None and chatgpt_mode not in {"mock", "cdp"}:
+        raise ValueError("chatgpt_mode must be 'mock' or 'cdp'.")
+    use_new_chat = normalized.get("chatgpt_use_new_chat")
+    if use_new_chat is not None and type(use_new_chat) is not bool:
+        raise ValueError("chatgpt_use_new_chat must be a boolean.")
+    timeout = normalized.get("chatgpt_reply_timeout_s")
+    if timeout is not None and (type(timeout) is not int or not 30 <= timeout <= 1800):
+        raise ValueError("chatgpt_reply_timeout_s must be an integer from 30 through 1800.")
+    return normalized
+
+
 def save_config(patch: dict) -> dict:
     data = load_config()
-    for key in DEFAULT_CONFIG:
-        if key in patch:
-            data[key] = patch[key]
+    data.update(validate_config_patch(patch))
     CONFIG_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     redacted = dict(data)
     redacted["api_token"] = "***" if redacted.get("api_token") else ""
@@ -486,13 +507,19 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         config = load_config()
         if path == "/api/config/update":
-            return json_response(self, 200, save_config(read_json(self)))
+            try:
+                return json_response(self, 200, save_config(read_json(self)))
+            except ValueError as exc:
+                return json_response(self, 422, {"error": "Invalid config", "detail": str(exc)})
         if path == "/api/check/codex":
             return json_response(self, 200, check_command("codex", config["codex_command"], {"codex"}))
         if path == "/api/check/hermes":
             return json_response(self, 200, check_command("hermes", config["hermes_command"], {"hermes"}))
         if path == "/api/check/chrome":
             return json_response(self, 200, check_chrome())
+        if path == "/api/check/chatgpt":
+            settings = AppConfig(**load_config())
+            return json_response(self, 200, make_chatgpt_adapter(settings).health_check())
         if path == "/api/task/create":
             return json_response(self, 200, workflow_create_task(TaskRequest(**read_json(self))).model_dump())
         if path.startswith("/api/tasks/"):

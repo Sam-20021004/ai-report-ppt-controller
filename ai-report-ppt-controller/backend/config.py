@@ -37,7 +37,11 @@ class AppConfig(BaseModel):
     hermes_test_prompt: str = "Return OK only."
     chatgpt_mode: Literal["mock", "cdp"] = Field(default_factory=lambda: os.getenv("CHATGPT_MODE", "mock"))
     chatgpt_use_new_chat: bool = Field(default_factory=lambda: os.getenv("CHATGPT_USE_NEW_CHAT", "1") == "1")
-    chatgpt_reply_timeout_s: int = Field(default_factory=lambda: int(os.getenv("CHATGPT_REPLY_TIMEOUT_S", "600")))
+    chatgpt_reply_timeout_s: int = Field(
+        default_factory=lambda: int(os.getenv("CHATGPT_REPLY_TIMEOUT_S", "600")),
+        ge=30,
+        le=1800,
+    )
     planner_mode: Literal["hermes", "chatgpt"] = Field(default_factory=lambda: os.getenv("PLANNER_MODE", "hermes"))
     chrome_host: str = Field(default_factory=lambda: os.getenv("CHROME_CDP_HOST", "127.0.0.1"))
     chrome_port: int = Field(default_factory=lambda: int(os.getenv("CHROME_CDP_PORT", "9222")))

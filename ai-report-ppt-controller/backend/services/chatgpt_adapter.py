@@ -295,6 +295,71 @@ def ask_chatgpt(
         }
 
 
+def _inspect_chatgpt_session(settings: AppConfig) -> dict[str, Any]:
+    from playwright.sync_api import sync_playwright
+
+    started = time.perf_counter()
+    cdp_url = f"http://{settings.chrome_host}:{settings.chrome_port}"
+    created_page = False
+    page = None
+    try:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.connect_over_cdp(cdp_url)
+            context = browser.contexts[0] if browser.contexts else browser.new_context()
+            page = next((item for item in context.pages if item.url.startswith(CHATGPT_URL)), None)
+            if page is None:
+                page = context.new_page()
+                created_page = True
+                page.goto(CHATGPT_URL, wait_until="domcontentloaded", timeout=60_000)
+
+            composer = page.locator(
+                '#prompt-textarea, textarea[data-id], textarea[id*="prompt"], '
+                'div[contenteditable="true"]'
+            ).first
+            if composer.count() > 0:
+                return {
+                    "name": "chatgpt",
+                    "ok": True,
+                    "status": "success",
+                    "detail": "ChatGPT page is reachable and the prompt composer is available.",
+                    "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                    "metadata": {"composer_available": True},
+                }
+
+            login = page.locator(
+                'a:has-text("Log in"), a:has-text("登录"), '
+                'button:has-text("Log in"), button:has-text("登录")'
+            ).first
+            status = "login_required" if login.count() > 0 else "composer_not_found"
+            detail = (
+                "ChatGPT login is required."
+                if status == "login_required"
+                else "ChatGPT opened but the prompt composer was not found."
+            )
+            return {
+                "name": "chatgpt",
+                "ok": False,
+                "status": status,
+                "detail": detail,
+                "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                "metadata": {"composer_available": False},
+            }
+    except Exception as exc:
+        return {
+            "name": "chatgpt",
+            "ok": False,
+            "status": "chatgpt_page_unavailable",
+            "detail": f"ChatGPT page readiness check failed: {exc}",
+            "elapsed_ms": int((time.perf_counter() - started) * 1000),
+        }
+    finally:
+        if created_page and page is not None:
+            try:
+                page.close()
+            except Exception:
+                pass
+
+
 class ChatGPTAdapter(AgentAdapter):
     def __init__(self, settings: AppConfig | None = None):
         self.settings = settings or get_settings()
@@ -311,25 +376,7 @@ class ChatGPTAdapter(AgentAdapter):
                 "detail": f"Chrome CDP 不可用（{result.detail}）。ChatGPT 规划需要已登录的 chrome-debug-profile。",
                 "elapsed_ms": result.elapsed_ms,
             }
-        try:
-            pages = result.metadata.get("pages") or []
-            chatgpt_pages = [pg for pg in pages if "chatgpt.com" in (pg.get("url") or "")]
-            return {
-                "name": "chatgpt",
-                "ok": True,
-                "status": "success",
-                "detail": f"Chrome CDP 已连接，{len(pages)} 个页面，{len(chatgpt_pages)} 个 chatgpt.com 页面。",
-                "elapsed_ms": result.elapsed_ms,
-                "metadata": {"chatgpt_pages": len(chatgpt_pages)},
-            }
-        except Exception as exc:
-            return {
-                "name": "chatgpt",
-                "ok": False,
-                "status": "failed",
-                "detail": f"ChatGPT 检查失败: {exc}",
-                "elapsed_ms": result.elapsed_ms,
-            }
+        return _inspect_chatgpt_session(self.settings)
 
     def run_task(
         self,

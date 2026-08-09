@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from backend.config import AppConfig
+from backend.models.agent import AgentCheckResult
 from backend.services import chatgpt_adapter
 from backend.services.chatgpt_adapter import (
     ChatGPTAdapter,
@@ -98,6 +99,40 @@ def test_adapter_preserves_structured_browser_error(tmp_path, monkeypatch):
     assert response["status"] == "failed"
     assert response["error_code"] == "reply_timeout"
     assert response["error"] == "timed out"
+
+
+def test_health_check_reports_page_readiness_instead_of_only_cdp(monkeypatch):
+    from backend.services import chrome_client
+
+    monkeypatch.setattr(
+        chrome_client,
+        "check_chrome",
+        lambda settings: AgentCheckResult(
+            name="chrome_cdp",
+            ok=True,
+            status="success",
+            detail="connected",
+            elapsed_ms=2,
+            metadata={"pages": []},
+        ),
+    )
+    monkeypatch.setattr(
+        chatgpt_adapter,
+        "_inspect_chatgpt_session",
+        lambda settings: {
+            "name": "chatgpt",
+            "ok": False,
+            "status": "login_required",
+            "detail": "ChatGPT login is required.",
+            "elapsed_ms": 3,
+        },
+        raising=False,
+    )
+
+    result = ChatGPTAdapter(AppConfig(chatgpt_mode="cdp")).health_check()
+
+    assert result["ok"] is False
+    assert result["status"] == "login_required"
 
 
 class FakeMessageLocator:
