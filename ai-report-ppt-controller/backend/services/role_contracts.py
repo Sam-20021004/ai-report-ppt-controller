@@ -95,9 +95,9 @@ class HermesExecutionResult(BaseModel):
     task_id: NonEmptyText
     status: Literal["success", "failed"]
     summary: str
-    sources: list[SafeRelativePath] = Field(default_factory=list)
+    sources: list[dict[str, Any]] = Field(default_factory=list)
     artifact_paths: list[SafeRelativePath] = Field(default_factory=list)
-    errors: list[NonEmptyText] = Field(default_factory=list)
+    errors: list[dict[str, Any]] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_success_summary(self) -> "HermesExecutionResult":
@@ -113,7 +113,7 @@ class CodexFinalizationResult(BaseModel):
     status: Literal["success", "failed"]
     summary: str
     artifact_paths: list[SafeRelativePath] = Field(default_factory=list)
-    errors: list[NonEmptyText] = Field(default_factory=list)
+    errors: list[dict[str, Any]] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_success(self) -> "CodexFinalizationResult":
@@ -130,9 +130,53 @@ class ChatGPTReview(BaseModel):
     schema_version: Literal["role.review.v1"]
     score: StrictInt | StrictFloat = Field(ge=0, le=100)
     passed: StrictBool = Field(alias="pass")
-    blocking_issues: list[NonEmptyText] = Field(default_factory=list)
-    minor_issues: list[NonEmptyText] = Field(default_factory=list)
+    blocking_issues: list[dict[str, Any]] = Field(default_factory=list)
+    minor_issues: list[dict[str, Any]] = Field(default_factory=list)
     revision_instruction: str = ""
+
+
+class RoleAttempt(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    agent: Literal["codex", "hermes", "chatgpt"]
+    operation: NonEmptyText
+    status: Literal["success", "failed", "mock", "fallback", "missing"]
+    error_code: str | None = None
+    elapsed_ms: int = Field(ge=0)
+    artifact_paths: list[SafeRelativePath] = Field(default_factory=list)
+
+
+class ArtifactManifestEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    path: SafeRelativePath
+    sha256: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
+    size: int = Field(ge=0)
+
+
+class RoleBaselineTrace(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["role.baseline.trace.v1"]
+    run_id: NonEmptyText
+    status: Literal["success", "failed"]
+    error_code: str | None = None
+    started_at: NonEmptyText
+    completed_at: NonEmptyText
+    attempts: list[RoleAttempt]
+    artifacts: list[ArtifactManifestEntry]
+
+    @model_validator(mode="after")
+    def success_requires_real_attempts(self) -> "RoleBaselineTrace":
+        if self.status == "success" and any(
+            attempt.status != "success" for attempt in self.attempts
+        ):
+            raise ValueError("successful trace requires every attempt to be successful")
+        if self.status == "success" and self.error_code is not None:
+            raise ValueError("successful trace cannot contain an error_code")
+        if self.status == "failed" and not self.error_code:
+            raise ValueError("failed trace requires an error_code")
+        return self
 
 
 def _error_path(location: tuple[Any, ...]) -> str:
@@ -186,3 +230,7 @@ def validate_codex_finalization(payload: Any) -> dict[str, Any]:
 
 def validate_chatgpt_review(payload: Any) -> dict[str, Any]:
     return _validate(ChatGPTReview, payload)
+
+
+def validate_role_baseline_trace(payload: Any) -> dict[str, Any]:
+    return _validate(RoleBaselineTrace, payload)

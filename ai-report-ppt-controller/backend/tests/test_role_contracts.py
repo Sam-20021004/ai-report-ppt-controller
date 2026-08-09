@@ -12,6 +12,7 @@ from backend.services.role_contracts import (
     validate_chatgpt_review,
     validate_codex_finalization,
     validate_hermes_execution,
+    validate_role_baseline_trace,
     validate_role_plan,
 )
 
@@ -130,3 +131,28 @@ def test_chatgpt_review_preserves_pass_alias() -> None:
 
     assert result["pass"] is True
     assert "passed" not in result
+
+
+def test_success_trace_rejects_non_real_attempt() -> None:
+    with pytest.raises(RoleContractError):
+        validate_role_baseline_trace(
+            {
+                "schema_version": "role.baseline.trace.v1",
+                "run_id": "run-001",
+                "status": "success",
+                "error_code": None,
+                "started_at": "2026-08-10T10:00:00+00:00",
+                "completed_at": "2026-08-10T10:00:01+00:00",
+                "attempts": [
+                    {
+                        "agent": "codex",
+                        "operation": "readiness",
+                        "status": "mock",
+                        "error_code": None,
+                        "elapsed_ms": 1,
+                        "artifact_paths": [],
+                    }
+                ],
+                "artifacts": [],
+            }
+        )
