@@ -42,6 +42,7 @@ class FakeElement {
     this.files = [];
     this.value = "";
     this.checked = false;
+    this.disabled = false;
     this.type = "text";
     this.textContent = "";
     this._innerHTML = "";
@@ -233,6 +234,40 @@ function jsonResponse(data, ok = true) {
     ok,
     json: async () => data,
   };
+}
+
+async function bootBaselineApp({ config, baseline }) {
+  const calls = [];
+  const document = createFakeDocument();
+  const localStorage = createStorage({});
+  const context = vm.createContext({
+    console,
+    document,
+    FormData: FakeFormData,
+    localStorage,
+    setTimeout,
+    clearTimeout,
+    fetch: async (path, options = {}) => {
+      calls.push({ path, options });
+      if (path === "/api/health") {
+        return jsonResponse({ ok: true, phase: "test", storage: { writable: true } });
+      }
+      if (path === "/api/config") return jsonResponse(config);
+      if (path === "/api/tasks") return jsonResponse({ tasks: [] });
+      if (path === "/api/check/role-baseline") return jsonResponse(baseline);
+      return jsonResponse({ error: `unexpected ${path}` }, false);
+    },
+    window: {
+      setInterval: () => 1,
+      clearInterval: () => {},
+    },
+  });
+  context.window.window = context.window;
+  context.window.document = document;
+  context.window.localStorage = localStorage;
+  vm.runInContext(readFileSync(APP_JS, "utf8"), context);
+  await waitFor(() => assert(calls.some((call) => call.path === "/api/config")));
+  return { calls, document };
 }
 
 async function waitFor(assertion, attempts = 20) {
@@ -545,6 +580,61 @@ test("ChatGPT health check is requested and rendered", async () => {
   assert.match(document.querySelector("#connection-status").innerHTML, /ChatGPT/);
 });
 
-test("static HTML uses the ChatGPT planner cache version", () => {
-  assert.match(readFileSync(INDEX_HTML, "utf8"), /app\.js\?v=phase16-chatgpt-planner/);
+test("three-agent profile renders fixed responsibilities", async () => {
+  const { document } = await bootBaselineApp({
+    config: {
+      workflow_profile: "three_agent_v2",
+      planner_mode: "hermes",
+      chatgpt_mode: "cdp",
+      chatgpt_use_new_chat: true,
+      chatgpt_reply_timeout_s: 600,
+    },
+    baseline: {},
+  });
+
+  assert.equal(document.querySelector("#workflow-profile").textContent, "三代理 V2");
+  assert.match(document.querySelector("#role-baseline-agents").textContent, /Codex.*规划.*最终生成/);
+  assert.match(document.querySelector("#role-baseline-agents").textContent, /Hermes.*任务执行/);
+  assert.match(document.querySelector("#role-baseline-agents").textContent, /ChatGPT.*审核.*终审/);
+  assert.equal(document.querySelector("#task-form").elements.main_agent.disabled, true);
+  assert.equal(document.querySelector("#task-form").elements.review_agent.disabled, true);
+});
+
+test("baseline runs only after an explicit click", async () => {
+  const { calls, document } = await bootBaselineApp({
+    config: { workflow_profile: "three_agent_v2" },
+    baseline: {
+      status: "success",
+      error_code: null,
+      agents: { codex: { status: "success", elapsed_ms: 3 } },
+      artifacts: ["diagnostic_plan.json"],
+    },
+  });
+
+  assert.equal(calls.filter((call) => call.path === "/api/check/role-baseline").length, 0);
+  document.querySelector("#role-baseline-run").click();
+  await waitFor(() => assert.equal(calls.filter((call) => call.path === "/api/check/role-baseline").length, 1));
+  await waitFor(() => assert.match(document.querySelector("#role-baseline-status").textContent, /成功/));
+  assert.equal(document.querySelector("#role-baseline-status").classList.contains("success"), true);
+});
+
+test("mock agent status is not rendered as a passing baseline", async () => {
+  const { document } = await bootBaselineApp({
+    config: { workflow_profile: "three_agent_v2" },
+    baseline: {
+      status: "failed",
+      error_code: "codex_not_ready",
+      agents: { codex: { status: "mock", error_code: "codex_not_ready" } },
+      artifacts: [],
+    },
+  });
+
+  document.querySelector("#role-baseline-run").click();
+  await waitFor(() => assert.match(document.querySelector("#role-baseline-status").textContent, /失败/));
+  assert.equal(document.querySelector("#role-baseline-status").classList.contains("success"), false);
+  assert.match(document.querySelector("#role-baseline-agents").textContent, /mock/);
+});
+
+test("static HTML uses the role baseline cache version", () => {
+  assert.match(readFileSync(INDEX_HTML, "utf8"), /app\.js\?v=phase17-role-baseline/);
 });

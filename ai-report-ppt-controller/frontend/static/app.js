@@ -72,6 +72,8 @@ const state = {
   checks: {},
   pollTimer: null,
   taskHistory: [],
+  workflowProfile: "legacy",
+  roleBaseline: null,
 };
 
 const REVIEW_STATUS_LABELS = {
@@ -109,6 +111,10 @@ const chatgptMode = document.querySelector("#chatgpt-mode");
 const chatgptUseNewChat = document.querySelector("#chatgpt-use-new-chat");
 const chatgptReplyTimeout = document.querySelector("#chatgpt-reply-timeout");
 const chatgptCheckResult = document.querySelector("#chatgpt-check-result");
+const workflowProfile = document.querySelector("#workflow-profile");
+const roleBaselineStatus = document.querySelector("#role-baseline-status");
+const roleBaselineAgents = document.querySelector("#role-baseline-agents");
+const roleBaselineArtifacts = document.querySelector("#role-baseline-artifacts");
 
 document.querySelectorAll(".tab").forEach((button) => {
   button.addEventListener("click", () => setTab(button.dataset.tab));
@@ -117,6 +123,7 @@ document.querySelectorAll(".tab").forEach((button) => {
 document.querySelector("#check-all").addEventListener("click", checkAll);
 document.querySelector("#check-chrome").addEventListener("click", checkChrome);
 document.querySelector("#check-chatgpt").addEventListener("click", checkChatGPT);
+document.querySelector("#role-baseline-run").addEventListener("click", runRoleBaseline);
 document.querySelector("#save-planner-config").addEventListener("click", savePlannerConfig);
 plannerMode.addEventListener("change", syncPlannerControls);
 document.querySelector("#create-task").addEventListener("click", createTask);
@@ -167,6 +174,10 @@ async function init() {
   await loadHealth().catch((error) => {
     logSystem("Backend health check failed", { error: error.message });
     renderConnections();
+  });
+  await loadConfig({ navigate: false, notify: false }).catch((error) => {
+    logSystem("工作流配置读取失败", { error: error.message });
+    renderRoleProfile("legacy");
   });
   renderRegistry();
   await loadTaskHistory();
@@ -268,16 +279,106 @@ async function loadTaskHistory() {
   renderRecentTasks();
 }
 
-async function loadConfig() {
+async function loadConfig(options = {}) {
   const config = await api("/api/config");
   plannerMode.value = config.planner_mode === "chatgpt" ? "chatgpt" : "hermes";
   chatgptMode.value = config.chatgpt_mode === "cdp" ? "cdp" : "mock";
   chatgptUseNewChat.checked = config.chatgpt_use_new_chat !== false;
   chatgptReplyTimeout.value = String(config.chatgpt_reply_timeout_s || 600);
+  renderRoleProfile(config.workflow_profile || "legacy");
   syncPlannerControls();
   logSystem("当前配置", config);
-  setTab("system");
-  showToast("配置已读取。");
+  if (options.navigate !== false) setTab("system");
+  if (options.notify !== false) showToast("配置已读取。");
+}
+
+function renderRoleProfile(profile) {
+  state.workflowProfile = profile === "three_agent_v2" ? "three_agent_v2" : "legacy";
+  workflowProfile.textContent = state.workflowProfile === "three_agent_v2" ? "三代理 V2" : "旧版工作流";
+  const isThreeAgent = state.workflowProfile === "three_agent_v2";
+  [form.elements.main_agent, form.elements.review_agent].forEach((control) => {
+    control.disabled = isThreeAgent;
+    control.closest(".legacy-controls")?.classList.toggle("setting-disabled", isThreeAgent);
+  });
+  renderRoleBaseline(state.roleBaseline);
+}
+
+async function runRoleBaseline() {
+  setBusy("#role-baseline-run", true);
+  roleBaselineStatus.textContent = "正在验证 Windows Codex、WSL Hermes 与网页 ChatGPT 就绪状态……";
+  roleBaselineStatus.classList.remove("success", "failed");
+  try {
+    const result = await api("/api/check/role-baseline", {
+      method: "POST",
+      body: "{}",
+    });
+    state.roleBaseline = result;
+    renderRoleBaseline(result);
+    logSystem("三代理连接基线", {
+      status: result.status,
+      error_code: result.error_code || null,
+      artifacts: result.artifacts || [],
+    });
+  } catch (error) {
+    state.roleBaseline = {
+      status: "failed",
+      error_code: "request_failed",
+      agents: {},
+      artifacts: [],
+    };
+    renderRoleBaseline(state.roleBaseline);
+    logSystem("三代理连接基线请求失败", { error: error.message });
+  } finally {
+    setBusy("#role-baseline-run", false);
+  }
+}
+
+function renderRoleBaseline(result) {
+  const responsibilities = {
+    codex: "规划、最终生成、修订",
+    hermes: "任务执行",
+    chatgpt: "审核、终审",
+  };
+  const labels = { codex: "Codex（Windows）", hermes: "Hermes（WSL）", chatgpt: "ChatGPT（网页）" };
+  const lines = Object.entries(responsibilities).map(([name, responsibility]) => {
+    const agent = result?.agents?.[name];
+    if (!agent) return `${labels[name]}：${responsibility}`;
+    const elapsed = Number.isFinite(agent.elapsed_ms) ? `，${agent.elapsed_ms} ms` : "";
+    const error = agent.error_code ? `，${agent.error_code}` : "";
+    return `${labels[name]}：${responsibility}｜${agent.status || "unknown"}${elapsed}${error}`;
+  });
+  roleBaselineAgents.textContent = lines.join("\n");
+
+  roleBaselineStatus.classList.remove("success", "failed");
+  if (!result) {
+    roleBaselineStatus.textContent = "尚未运行。仅在点击按钮后执行诊断。";
+    roleBaselineArtifacts.textContent = "尚无诊断产物。";
+    return;
+  }
+
+  const passed = result.status === "success"
+    && Object.values(result.agents || {}).every((agent) => agent.status === "success");
+  roleBaselineStatus.classList.add(passed ? "success" : "failed");
+  roleBaselineStatus.textContent = passed
+    ? "连接基线成功：三端均为真实就绪，固定角色交接已完成。"
+    : `连接基线失败：${result.error_code || "unknown_error"}。${baselineRemediation(result.error_code)}`;
+  const artifacts = Array.isArray(result.artifacts) ? result.artifacts : [];
+  roleBaselineArtifacts.textContent = artifacts.length
+    ? `诊断产物\n${artifacts.map((item) => `- ${item}`).join("\n")}`
+    : "尚无可用诊断产物；请先处理失败原因后重试。";
+}
+
+function baselineRemediation(errorCode) {
+  const remedies = {
+    codex_windows_required: "请把 CODEX_COMMAND 配置为 Windows 原生 Codex，不能使用 wsl:。",
+    codex_access_denied: "请修复 Windows Codex 可执行文件权限或安装位置。",
+    codex_login_required: "请在 Windows 终端完成 codex login。",
+    hermes_bridge_unavailable: "请确认 WSL Hermes 桥接服务监听于配置的 HERMES_ENDPOINT。",
+    hermes_auth_failed: "请核对 Hermes 桥接认证配置。",
+    chatgpt_cdp_unavailable: "请用远程调试端口启动 Chrome。",
+    chatgpt_login_required: "请在调试用 Chrome 中登录 ChatGPT。",
+  };
+  return remedies[errorCode] || "请查看相对路径审计轨迹中的稳定错误码。";
 }
 
 async function savePlannerConfig() {
