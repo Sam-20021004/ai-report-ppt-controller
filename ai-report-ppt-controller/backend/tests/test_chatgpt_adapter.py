@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from collections import deque
 from pathlib import Path
+import sys
+import types
 from typing import Any
 
 from backend.config import AppConfig
@@ -133,6 +135,69 @@ def test_health_check_reports_page_readiness_instead_of_only_cdp(monkeypatch):
 
     assert result["ok"] is False
     assert result["status"] == "login_required"
+
+
+def test_page_readiness_closes_temporary_page_before_playwright_exits(monkeypatch):
+    lifecycle = {"active": False, "closed": False}
+
+    class Locator:
+        def __init__(self, count):
+            self._count = count
+            self.first = self
+
+        def count(self):
+            return self._count
+
+    class Page:
+        url = "https://chatgpt.com/"
+
+        def goto(self, *args, **kwargs):
+            return None
+
+        def locator(self, selector):
+            return Locator(1 if "prompt-textarea" in selector else 0)
+
+        def close(self):
+            if not lifecycle["active"]:
+                raise RuntimeError("Playwright already exited")
+            lifecycle["closed"] = True
+
+    page = Page()
+
+    class Context:
+        pages = []
+
+        def new_page(self):
+            return page
+
+    class Browser:
+        contexts = [Context()]
+
+    class Chromium:
+        def connect_over_cdp(self, url):
+            return Browser()
+
+    class Playwright:
+        chromium = Chromium()
+
+    class Manager:
+        def __enter__(self):
+            lifecycle["active"] = True
+            return Playwright()
+
+        def __exit__(self, exc_type, exc, traceback):
+            lifecycle["active"] = False
+
+    playwright_module = types.ModuleType("playwright")
+    sync_api_module = types.ModuleType("playwright.sync_api")
+    sync_api_module.sync_playwright = lambda: Manager()
+    monkeypatch.setitem(sys.modules, "playwright", playwright_module)
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", sync_api_module)
+
+    result = chatgpt_adapter._inspect_chatgpt_session(AppConfig(chatgpt_mode="cdp"))
+
+    assert result["status"] == "success"
+    assert lifecycle["closed"] is True
 
 
 class FakeMessageLocator:

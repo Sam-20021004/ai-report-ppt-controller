@@ -4,6 +4,7 @@ import test from "node:test";
 import vm from "node:vm";
 
 const APP_JS = new URL("./app.js", import.meta.url);
+const INDEX_HTML = new URL("./index.html", import.meta.url);
 
 class FakeClassList {
   constructor() {
@@ -542,4 +543,8 @@ test("ChatGPT health check is requested and rendered", async () => {
   await waitFor(() => assert(fetchCalls.some((call) => call.path === "/api/check/chatgpt")));
   await waitFor(() => assert.match(document.querySelector("#chatgpt-check-result").textContent, /login_required/));
   assert.match(document.querySelector("#connection-status").innerHTML, /ChatGPT/);
+});
+
+test("static HTML uses the ChatGPT planner cache version", () => {
+  assert.match(readFileSync(INDEX_HTML, "utf8"), /app\.js\?v=phase16-chatgpt-planner/);
 });

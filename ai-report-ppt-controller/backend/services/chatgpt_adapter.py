@@ -317,7 +317,7 @@ def _inspect_chatgpt_session(settings: AppConfig) -> dict[str, Any]:
                 'div[contenteditable="true"]'
             ).first
             if composer.count() > 0:
-                return {
+                result = {
                     "name": "chatgpt",
                     "ok": True,
                     "status": "success",
@@ -325,25 +325,28 @@ def _inspect_chatgpt_session(settings: AppConfig) -> dict[str, Any]:
                     "elapsed_ms": int((time.perf_counter() - started) * 1000),
                     "metadata": {"composer_available": True},
                 }
-
-            login = page.locator(
-                'a:has-text("Log in"), a:has-text("登录"), '
-                'button:has-text("Log in"), button:has-text("登录")'
-            ).first
-            status = "login_required" if login.count() > 0 else "composer_not_found"
-            detail = (
-                "ChatGPT login is required."
-                if status == "login_required"
-                else "ChatGPT opened but the prompt composer was not found."
-            )
-            return {
-                "name": "chatgpt",
-                "ok": False,
-                "status": status,
-                "detail": detail,
-                "elapsed_ms": int((time.perf_counter() - started) * 1000),
-                "metadata": {"composer_available": False},
-            }
+            else:
+                login = page.locator(
+                    'a:has-text("Log in"), a:has-text("登录"), '
+                    'button:has-text("Log in"), button:has-text("登录")'
+                ).first
+                status = "login_required" if login.count() > 0 else "composer_not_found"
+                detail = (
+                    "ChatGPT login is required."
+                    if status == "login_required"
+                    else "ChatGPT opened but the prompt composer was not found."
+                )
+                result = {
+                    "name": "chatgpt",
+                    "ok": False,
+                    "status": status,
+                    "detail": detail,
+                    "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                    "metadata": {"composer_available": False},
+                }
+            if created_page:
+                page.close()
+            return result
     except Exception as exc:
         return {
             "name": "chatgpt",
@@ -352,12 +355,6 @@ def _inspect_chatgpt_session(settings: AppConfig) -> dict[str, Any]:
             "detail": f"ChatGPT page readiness check failed: {exc}",
             "elapsed_ms": int((time.perf_counter() - started) * 1000),
         }
-    finally:
-        if created_page and page is not None:
-            try:
-                page.close()
-            except Exception:
-                pass
 
 
 class ChatGPTAdapter(AgentAdapter):
