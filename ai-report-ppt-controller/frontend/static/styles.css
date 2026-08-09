@@ -861,6 +861,52 @@ button:disabled {
   padding-left: 8px;
 }
 
+.planner-settings {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-soft);
+  padding: 14px;
+}
+
+.planner-settings h3,
+.planner-settings p {
+  margin: 0;
+}
+
+.planner-settings .card-head > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.planner-settings .card-head p,
+.planner-check-result,
+.planner-privacy-note {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.planner-settings-grid {
+  align-items: end;
+}
+
+.planner-settings .checkbox-field {
+  align-items: center;
+  display: flex;
+  min-height: 38px;
+}
+
+.setting-disabled {
+  opacity: 0.55;
+}
+
+.planner-privacy-note {
+  border-left: 3px solid var(--orange);
+  padding-left: 8px;
+}
+
 .toast {
   position: fixed;
   left: 50%;

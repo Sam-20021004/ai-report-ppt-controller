@@ -194,6 +194,7 @@ function createFakeDocument() {
 
   document.querySelector("#ppt-template").files = [];
   document.querySelector("#word-template").files = [];
+  document.querySelector("#chatgpt-use-new-chat").type = "checkbox";
 
   return document;
 }
@@ -434,4 +435,111 @@ test("initialization loads history and clicking a history task opens it", async 
   assert.equal(localStorage.getItem("ai_report_current_task_id"), "task-history-2");
   assert.match(document.querySelector("#phase2-audit").innerHTML, /history picker note/);
   assert.match(document.querySelector("#phase2-audit").innerHTML, /approved/);
+});
+
+test("planner settings load and save the four supported values", async () => {
+  const fetchCalls = [];
+  const document = createFakeDocument();
+  const localStorage = createStorage({});
+
+  const context = vm.createContext({
+    console,
+    document,
+    FormData: FakeFormData,
+    localStorage,
+    setTimeout,
+    clearTimeout,
+    fetch: async (path, options = {}) => {
+      fetchCalls.push({ path, options });
+      if (path === "/api/health") {
+        return jsonResponse({ ok: true, phase: "test", storage: { writable: true } });
+      }
+      if (path === "/api/tasks") return jsonResponse({ tasks: [] });
+      if (path === "/api/config") {
+        return jsonResponse({
+          planner_mode: "hermes",
+          chatgpt_mode: "mock",
+          chatgpt_use_new_chat: true,
+          chatgpt_reply_timeout_s: 600,
+        });
+      }
+      if (path === "/api/config/update") {
+        return jsonResponse(JSON.parse(options.body));
+      }
+      return jsonResponse({ error: `unexpected ${path}` }, false);
+    },
+    window: {
+      setInterval: () => 1,
+      clearInterval: () => {},
+    },
+  });
+  context.window.window = context.window;
+  context.window.document = document;
+  context.window.localStorage = localStorage;
+
+  vm.runInContext(readFileSync(APP_JS, "utf8"), context);
+  document.querySelector("#top-settings").click();
+  await waitFor(() => assert.equal(document.querySelector("#planner-mode").value, "hermes"));
+  assert.equal(document.querySelector("#chatgpt-mode").value, "mock");
+  assert.equal(document.querySelector("#chatgpt-use-new-chat").checked, true);
+  assert.equal(document.querySelector("#chatgpt-reply-timeout").value, "600");
+
+  document.querySelector("#planner-mode").value = "chatgpt";
+  document.querySelector("#chatgpt-mode").value = "cdp";
+  document.querySelector("#chatgpt-use-new-chat").checked = false;
+  document.querySelector("#chatgpt-reply-timeout").value = "720";
+  document.querySelector("#save-planner-config").click();
+
+  await waitFor(() => assert(fetchCalls.some((call) => call.path === "/api/config/update")));
+  const updateCall = fetchCalls.find((call) => call.path === "/api/config/update");
+  assert.deepEqual(JSON.parse(updateCall.options.body), {
+    planner_mode: "chatgpt",
+    chatgpt_mode: "cdp",
+    chatgpt_use_new_chat: false,
+    chatgpt_reply_timeout_s: 720,
+  });
+});
+
+test("ChatGPT health check is requested and rendered", async () => {
+  const fetchCalls = [];
+  const document = createFakeDocument();
+  const localStorage = createStorage({});
+  const context = vm.createContext({
+    console,
+    document,
+    FormData: FakeFormData,
+    localStorage,
+    setTimeout,
+    clearTimeout,
+    fetch: async (path, options = {}) => {
+      fetchCalls.push({ path, options });
+      if (path === "/api/health") {
+        return jsonResponse({ ok: true, phase: "test", storage: { writable: true } });
+      }
+      if (path === "/api/tasks") return jsonResponse({ tasks: [] });
+      if (path === "/api/check/chatgpt") {
+        return jsonResponse({
+          name: "chatgpt",
+          ok: false,
+          status: "login_required",
+          detail: "ChatGPT login is required.",
+        });
+      }
+      return jsonResponse({ error: `unexpected ${path}` }, false);
+    },
+    window: {
+      setInterval: () => 1,
+      clearInterval: () => {},
+    },
+  });
+  context.window.window = context.window;
+  context.window.document = document;
+  context.window.localStorage = localStorage;
+
+  vm.runInContext(readFileSync(APP_JS, "utf8"), context);
+  document.querySelector("#check-chatgpt").click();
+
+  await waitFor(() => assert(fetchCalls.some((call) => call.path === "/api/check/chatgpt")));
+  await waitFor(() => assert.match(document.querySelector("#chatgpt-check-result").textContent, /login_required/));
+  assert.match(document.querySelector("#connection-status").innerHTML, /ChatGPT/);
 });

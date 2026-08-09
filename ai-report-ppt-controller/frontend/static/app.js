@@ -104,6 +104,11 @@ const formError = document.querySelector("#form-error");
 const restoreDraftButton = document.querySelector("#restore-draft");
 const rightRestoreDraftButton = document.querySelector("#right-restore-draft");
 const recentTasks = document.querySelector("#recent-tasks");
+const plannerMode = document.querySelector("#planner-mode");
+const chatgptMode = document.querySelector("#chatgpt-mode");
+const chatgptUseNewChat = document.querySelector("#chatgpt-use-new-chat");
+const chatgptReplyTimeout = document.querySelector("#chatgpt-reply-timeout");
+const chatgptCheckResult = document.querySelector("#chatgpt-check-result");
 
 document.querySelectorAll(".tab").forEach((button) => {
   button.addEventListener("click", () => setTab(button.dataset.tab));
@@ -111,6 +116,9 @@ document.querySelectorAll(".tab").forEach((button) => {
 
 document.querySelector("#check-all").addEventListener("click", checkAll);
 document.querySelector("#check-chrome").addEventListener("click", checkChrome);
+document.querySelector("#check-chatgpt").addEventListener("click", checkChatGPT);
+document.querySelector("#save-planner-config").addEventListener("click", savePlannerConfig);
+plannerMode.addEventListener("change", syncPlannerControls);
 document.querySelector("#create-task").addEventListener("click", createTask);
 document.querySelector("#run-task").addEventListener("click", runTask);
 document.querySelector("#refresh-task").addEventListener("click", refreshTask);
@@ -135,6 +143,7 @@ document.querySelector("#task-type").addEventListener("change", updateOutputVisi
 form.addEventListener("input", () => {
   syncFollowerTitles();
   renderPreflight();
+  syncPlannerControls();
 });
 document.querySelectorAll(".example-card").forEach((button) => {
   button.addEventListener("click", () => loadExample(button.dataset.example));
@@ -261,22 +270,55 @@ async function loadTaskHistory() {
 
 async function loadConfig() {
   const config = await api("/api/config");
+  plannerMode.value = config.planner_mode === "chatgpt" ? "chatgpt" : "hermes";
+  chatgptMode.value = config.chatgpt_mode === "cdp" ? "cdp" : "mock";
+  chatgptUseNewChat.checked = config.chatgpt_use_new_chat !== false;
+  chatgptReplyTimeout.value = String(config.chatgpt_reply_timeout_s || 600);
+  syncPlannerControls();
   logSystem("当前配置", config);
   setTab("system");
   showToast("配置已读取。");
 }
 
+async function savePlannerConfig() {
+  const timeout = Number(chatgptReplyTimeout.value);
+  if (!Number.isInteger(timeout) || timeout < 30 || timeout > 1800) {
+    showToast("ChatGPT 回复超时必须是 30–1800 秒的整数。");
+    return;
+  }
+  setBusy("#save-planner-config", true);
+  try {
+    const payload = {
+      planner_mode: plannerMode.value === "chatgpt" ? "chatgpt" : "hermes",
+      chatgpt_mode: chatgptMode.value === "cdp" ? "cdp" : "mock",
+      chatgpt_use_new_chat: Boolean(chatgptUseNewChat.checked),
+      chatgpt_reply_timeout_s: timeout,
+    };
+    const config = await api("/api/config/update", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    logSystem("规划器配置已更新", config);
+    syncPlannerControls();
+    showToast("规划器设置已保存。");
+  } finally {
+    setBusy("#save-planner-config", false);
+  }
+}
+
 async function checkAll() {
   setBusy("#check-all", true);
   try {
-    const [codex, hermes, chrome] = await Promise.all([
+    const [codex, hermes, chrome, chatgpt] = await Promise.all([
       api("/api/check/codex", { method: "POST", body: "{}" }),
       api("/api/check/hermes", { method: "POST", body: "{}" }),
       api("/api/check/chrome", { method: "POST", body: "{}" }),
+      api("/api/check/chatgpt", { method: "POST", body: "{}" }),
     ]);
-    state.checks = { codex, hermes, chrome };
-    agentOutput.textContent = JSON.stringify({ codex, hermes }, null, 2);
+    state.checks = { codex, hermes, chrome, chatgpt };
+    agentOutput.textContent = JSON.stringify({ codex, hermes, chatgpt }, null, 2);
     chromeOutput.textContent = JSON.stringify(chrome, null, 2);
+    chatgptCheckResult.textContent = `${chatgpt.status || "unknown"}: ${chatgpt.detail || ""}`;
     renderConnections();
     renderRegistry();
     showToast("连接检测完成。");
@@ -291,6 +333,31 @@ async function checkChrome() {
   chromeOutput.textContent = JSON.stringify(chrome, null, 2);
   renderConnections();
   setTab("chrome");
+}
+
+async function checkChatGPT() {
+  setBusy("#check-chatgpt", true);
+  try {
+    const chatgpt = await api("/api/check/chatgpt", { method: "POST", body: "{}" });
+    state.checks.chatgpt = chatgpt;
+    chatgptCheckResult.textContent = `${chatgpt.status || "unknown"}: ${chatgpt.detail || ""}`;
+    logSystem("ChatGPT 连接检测", chatgpt);
+    renderConnections();
+    renderRegistry();
+    setTab("system");
+  } finally {
+    setBusy("#check-chatgpt", false);
+  }
+}
+
+function syncPlannerControls() {
+  const enabled = plannerMode.value === "chatgpt";
+  [chatgptMode, chatgptUseNewChat, chatgptReplyTimeout].forEach((control) => {
+    control.disabled = !enabled;
+  });
+  document.querySelectorAll(".chatgpt-setting").forEach((field) => {
+    field.classList.toggle("setting-disabled", !enabled);
+  });
 }
 
 async function createTask() {
@@ -570,12 +637,13 @@ function renderConnections() {
     ["Codex", state.checks.codex?.ok, state.checks.codex?.status || "未检测"],
     ["Hermes", state.checks.hermes?.ok, state.checks.hermes?.status || "未检测"],
     ["Chrome", state.checks.chrome?.ok, state.checks.chrome?.status || "未检测"],
+    ["ChatGPT", state.checks.chatgpt?.ok, state.checks.chatgpt?.status || "未检测"],
     ["输出目录", state.health?.storage?.writable, state.health?.storage?.writable ? "可写" : "未知"],
   ];
   connectionStatus.innerHTML = items.map(([name, ok, status]) => `
     <div class="status-item"><strong>${name}</strong><span class="badge ${ok ? "success" : "waiting"}">${escapeHtml(status)}</span></div>
   `).join("");
-  topStatus.innerHTML = items.slice(0, 4).map(([name, ok, status]) => `
+  topStatus.innerHTML = items.slice(0, 5).map(([name, ok, status]) => `
     <span class="${ok ? "ok" : "idle"}">${escapeHtml(name)} · ${escapeHtml(status)}</span>
   `).join("");
 }
@@ -601,6 +669,7 @@ function renderRegistry() {
     ["Codex Connector", state.checks.codex?.status || "Mock/CLI Adapter"],
     ["Hermes Connector", state.checks.hermes?.status || "Mock/API Adapter"],
     ["Chrome CDP", state.checks.chrome?.status || "9222 /json 检测"],
+    ["ChatGPT Planner", state.checks.chatgpt?.status || "Mock/CDP Adapter"],
     ["Template Manager", "PPT/Word/材料上传"],
     ["Remote Access Auth", "本机模式默认开启，远程需 token"],
   ];

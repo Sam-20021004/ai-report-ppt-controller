@@ -251,6 +251,44 @@
 
         <section class="tab-panel" data-panel="system">
           <div class="panel-head"><h2>系统日志</h2><span>轮询 fallback</span></div>
+          <section class="planner-settings">
+            <div class="card-head">
+              <div>
+                <h3>规划器设置</h3>
+                <p>ChatGPT 只生成规划；失败时由 Hermes 接管。</p>
+              </div>
+              <div class="button-row">
+                <button id="check-chatgpt" class="secondary" type="button">检测 ChatGPT</button>
+                <button id="save-planner-config" type="button">保存设置</button>
+              </div>
+            </div>
+            <div class="grid-2 planner-settings-grid">
+              <label class="field">
+                <span>规划器</span>
+                <select id="planner-mode">
+                  <option value="chatgpt">ChatGPT 优先，失败回退 Hermes</option>
+                  <option value="hermes">仅使用 Hermes</option>
+                </select>
+              </label>
+              <label class="field chatgpt-setting">
+                <span>ChatGPT 模式</span>
+                <select id="chatgpt-mode">
+                  <option value="mock">Mock</option>
+                  <option value="cdp">Chrome CDP</option>
+                </select>
+              </label>
+              <label class="field chatgpt-setting checkbox-field">
+                <input id="chatgpt-use-new-chat" type="checkbox" checked>
+                <span>每次规划使用新对话</span>
+              </label>
+              <label class="field chatgpt-setting">
+                <span>回复超时（30–1800 秒）</span>
+                <input id="chatgpt-reply-timeout" type="number" min="30" max="1800" value="600">
+              </label>
+            </div>
+            <p id="chatgpt-check-result" class="planner-check-result">尚未检测 ChatGPT。</p>
+            <p class="planner-privacy-note">启用 ChatGPT 时，任务内容会发送到外部服务；请勿提交未经授权的敏感资料。</p>
+          </section>
           <pre id="system-log" class="terminal terminal-log tall">APP 已加载。</pre>
         </section>
 
