@@ -6,6 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from backend.config import AppConfig
 from backend.models.task import TaskRecord, TaskRequest, default_steps
 from backend.services import task_runner
 from backend.services.phase2_artifacts import source_review_key
@@ -193,8 +194,15 @@ def test_report_outline_metadata_uses_single_stable_file_type(tmp_path: Path) ->
 def _configure_task_storage(tmp_path: Path, monkeypatch) -> Path:
     storage_dir = tmp_path / "runtime"
     job_root = storage_dir / "workspace" / "jobs"
+    settings = AppConfig(
+        planner_mode="hermes",
+        hermes_mode="mock",
+        codex_mode="mock",
+        output_dir=str(storage_dir / "outputs"),
+    )
     monkeypatch.setattr(task_runner, "STORAGE_DIR", storage_dir)
     monkeypatch.setattr(task_runner, "JOB_ROOT", job_root)
+    monkeypatch.setattr(task_runner, "get_settings", lambda: settings)
     return storage_dir
 
 

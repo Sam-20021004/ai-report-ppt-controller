@@ -4,6 +4,7 @@ import test from "node:test";
 import vm from "node:vm";
 
 const APP_JS = new URL("./app.js", import.meta.url);
+const INDEX_HTML = new URL("./index.html", import.meta.url);
 
 class FakeClassList {
   constructor() {
@@ -41,6 +42,7 @@ class FakeElement {
     this.files = [];
     this.value = "";
     this.checked = false;
+    this.disabled = false;
     this.type = "text";
     this.textContent = "";
     this._innerHTML = "";
@@ -194,6 +196,7 @@ function createFakeDocument() {
 
   document.querySelector("#ppt-template").files = [];
   document.querySelector("#word-template").files = [];
+  document.querySelector("#chatgpt-use-new-chat").type = "checkbox";
 
   return document;
 }
@@ -231,6 +234,40 @@ function jsonResponse(data, ok = true) {
     ok,
     json: async () => data,
   };
+}
+
+async function bootBaselineApp({ config, baseline }) {
+  const calls = [];
+  const document = createFakeDocument();
+  const localStorage = createStorage({});
+  const context = vm.createContext({
+    console,
+    document,
+    FormData: FakeFormData,
+    localStorage,
+    setTimeout,
+    clearTimeout,
+    fetch: async (path, options = {}) => {
+      calls.push({ path, options });
+      if (path === "/api/health") {
+        return jsonResponse({ ok: true, phase: "test", storage: { writable: true } });
+      }
+      if (path === "/api/config") return jsonResponse(config);
+      if (path === "/api/tasks") return jsonResponse({ tasks: [] });
+      if (path === "/api/check/role-baseline") return jsonResponse(baseline);
+      return jsonResponse({ error: `unexpected ${path}` }, false);
+    },
+    window: {
+      setInterval: () => 1,
+      clearInterval: () => {},
+    },
+  });
+  context.window.window = context.window;
+  context.window.document = document;
+  context.window.localStorage = localStorage;
+  vm.runInContext(readFileSync(APP_JS, "utf8"), context);
+  await waitFor(() => assert(calls.some((call) => call.path === "/api/config")));
+  return { calls, document };
 }
 
 async function waitFor(assertion, attempts = 20) {
@@ -434,4 +471,170 @@ test("initialization loads history and clicking a history task opens it", async 
   assert.equal(localStorage.getItem("ai_report_current_task_id"), "task-history-2");
   assert.match(document.querySelector("#phase2-audit").innerHTML, /history picker note/);
   assert.match(document.querySelector("#phase2-audit").innerHTML, /approved/);
+});
+
+test("planner settings load and save the four supported values", async () => {
+  const fetchCalls = [];
+  const document = createFakeDocument();
+  const localStorage = createStorage({});
+
+  const context = vm.createContext({
+    console,
+    document,
+    FormData: FakeFormData,
+    localStorage,
+    setTimeout,
+    clearTimeout,
+    fetch: async (path, options = {}) => {
+      fetchCalls.push({ path, options });
+      if (path === "/api/health") {
+        return jsonResponse({ ok: true, phase: "test", storage: { writable: true } });
+      }
+      if (path === "/api/tasks") return jsonResponse({ tasks: [] });
+      if (path === "/api/config") {
+        return jsonResponse({
+          planner_mode: "hermes",
+          chatgpt_mode: "mock",
+          chatgpt_use_new_chat: true,
+          chatgpt_reply_timeout_s: 600,
+        });
+      }
+      if (path === "/api/config/update") {
+        return jsonResponse(JSON.parse(options.body));
+      }
+      return jsonResponse({ error: `unexpected ${path}` }, false);
+    },
+    window: {
+      setInterval: () => 1,
+      clearInterval: () => {},
+    },
+  });
+  context.window.window = context.window;
+  context.window.document = document;
+  context.window.localStorage = localStorage;
+
+  vm.runInContext(readFileSync(APP_JS, "utf8"), context);
+  document.querySelector("#top-settings").click();
+  await waitFor(() => assert.equal(document.querySelector("#planner-mode").value, "hermes"));
+  assert.equal(document.querySelector("#chatgpt-mode").value, "mock");
+  assert.equal(document.querySelector("#chatgpt-use-new-chat").checked, true);
+  assert.equal(document.querySelector("#chatgpt-reply-timeout").value, "600");
+
+  document.querySelector("#planner-mode").value = "chatgpt";
+  document.querySelector("#chatgpt-mode").value = "cdp";
+  document.querySelector("#chatgpt-use-new-chat").checked = false;
+  document.querySelector("#chatgpt-reply-timeout").value = "720";
+  document.querySelector("#save-planner-config").click();
+
+  await waitFor(() => assert(fetchCalls.some((call) => call.path === "/api/config/update")));
+  const updateCall = fetchCalls.find((call) => call.path === "/api/config/update");
+  assert.deepEqual(JSON.parse(updateCall.options.body), {
+    planner_mode: "chatgpt",
+    chatgpt_mode: "cdp",
+    chatgpt_use_new_chat: false,
+    chatgpt_reply_timeout_s: 720,
+  });
+});
+
+test("ChatGPT health check is requested and rendered", async () => {
+  const fetchCalls = [];
+  const document = createFakeDocument();
+  const localStorage = createStorage({});
+  const context = vm.createContext({
+    console,
+    document,
+    FormData: FakeFormData,
+    localStorage,
+    setTimeout,
+    clearTimeout,
+    fetch: async (path, options = {}) => {
+      fetchCalls.push({ path, options });
+      if (path === "/api/health") {
+        return jsonResponse({ ok: true, phase: "test", storage: { writable: true } });
+      }
+      if (path === "/api/tasks") return jsonResponse({ tasks: [] });
+      if (path === "/api/check/chatgpt") {
+        return jsonResponse({
+          name: "chatgpt",
+          ok: false,
+          status: "login_required",
+          detail: "ChatGPT login is required.",
+        });
+      }
+      return jsonResponse({ error: `unexpected ${path}` }, false);
+    },
+    window: {
+      setInterval: () => 1,
+      clearInterval: () => {},
+    },
+  });
+  context.window.window = context.window;
+  context.window.document = document;
+  context.window.localStorage = localStorage;
+
+  vm.runInContext(readFileSync(APP_JS, "utf8"), context);
+  document.querySelector("#check-chatgpt").click();
+
+  await waitFor(() => assert(fetchCalls.some((call) => call.path === "/api/check/chatgpt")));
+  await waitFor(() => assert.match(document.querySelector("#chatgpt-check-result").textContent, /login_required/));
+  assert.match(document.querySelector("#connection-status").innerHTML, /ChatGPT/);
+});
+
+test("three-agent profile renders fixed responsibilities", async () => {
+  const { document } = await bootBaselineApp({
+    config: {
+      workflow_profile: "three_agent_v2",
+      planner_mode: "hermes",
+      chatgpt_mode: "cdp",
+      chatgpt_use_new_chat: true,
+      chatgpt_reply_timeout_s: 600,
+    },
+    baseline: {},
+  });
+
+  assert.equal(document.querySelector("#workflow-profile").textContent, "三代理 V2");
+  assert.match(document.querySelector("#role-baseline-agents").textContent, /Codex.*规划.*最终生成/);
+  assert.match(document.querySelector("#role-baseline-agents").textContent, /Hermes.*任务执行/);
+  assert.match(document.querySelector("#role-baseline-agents").textContent, /ChatGPT.*审核.*终审/);
+  assert.equal(document.querySelector("#task-form").elements.main_agent.disabled, true);
+  assert.equal(document.querySelector("#task-form").elements.review_agent.disabled, true);
+});
+
+test("baseline runs only after an explicit click", async () => {
+  const { calls, document } = await bootBaselineApp({
+    config: { workflow_profile: "three_agent_v2" },
+    baseline: {
+      status: "success",
+      error_code: null,
+      agents: { codex: { status: "success", elapsed_ms: 3 } },
+      artifacts: ["diagnostic_plan.json"],
+    },
+  });
+
+  assert.equal(calls.filter((call) => call.path === "/api/check/role-baseline").length, 0);
+  document.querySelector("#role-baseline-run").click();
+  await waitFor(() => assert.equal(calls.filter((call) => call.path === "/api/check/role-baseline").length, 1));
+  await waitFor(() => assert.match(document.querySelector("#role-baseline-status").textContent, /成功/));
+  assert.equal(document.querySelector("#role-baseline-status").classList.contains("success"), true);
+});
+
+test("mock agent status is not rendered as a passing baseline", async () => {
+  const { document } = await bootBaselineApp({
+    config: { workflow_profile: "three_agent_v2" },
+    baseline: {
+      status: "failed",
+      error_code: "codex_not_ready",
+      agents: { codex: { status: "mock", error_code: "codex_not_ready" } },
+      artifacts: [],
+    },
+  });
+
+  document.querySelector("#role-baseline-run").click();
+  await waitFor(() => assert.match(document.querySelector("#role-baseline-status").textContent, /失败/));
+  assert.equal(document.querySelector("#role-baseline-status").classList.contains("success"), false);
+  assert.match(document.querySelector("#role-baseline-agents").textContent, /mock/);
+});
+
+test("static HTML uses the role baseline cache version", () => {
+  assert.match(readFileSync(INDEX_HTML, "utf8"), /app\.js\?v=phase17-role-baseline/);
 });

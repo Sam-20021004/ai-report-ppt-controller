@@ -861,6 +861,99 @@ button:disabled {
   padding-left: 8px;
 }
 
+.planner-settings {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-soft);
+  padding: 14px;
+}
+
+.role-baseline-card {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-soft);
+  padding: 14px;
+}
+
+.role-baseline-card h3,
+.role-baseline-card p {
+  margin: 0;
+}
+
+.role-grid {
+  display: grid;
+  gap: 6px;
+  white-space: pre-line;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.role-result {
+  margin: 0;
+  border-left: 3px solid var(--line);
+  background: var(--card);
+  padding: 8px 10px;
+  color: var(--muted);
+  white-space: pre-wrap;
+}
+
+.role-result.success {
+  border-left-color: var(--green);
+  color: var(--green);
+}
+
+.role-result.failed {
+  border-left-color: var(--red);
+  color: var(--red);
+}
+
+.legacy-controls:has(select:disabled) {
+  opacity: 0.55;
+}
+
+.planner-settings h3,
+.planner-settings p {
+  margin: 0;
+}
+
+.planner-settings .card-head > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.planner-settings .card-head p,
+.planner-check-result,
+.planner-privacy-note {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.planner-settings-grid {
+  align-items: end;
+}
+
+.planner-settings .checkbox-field {
+  align-items: center;
+  display: flex;
+  min-height: 38px;
+}
+
+.setting-disabled {
+  opacity: 0.55;
+}
+
+.planner-privacy-note {
+  border-left: 3px solid var(--orange);
+  padding-left: 8px;
+}
+
 .toast {
   position: fixed;
   left: 50%;

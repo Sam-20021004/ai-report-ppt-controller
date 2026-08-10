@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>AI Report & PPT Agent Controller</title>
-    <link rel="stylesheet" href="./styles.css?v=phase15-hotfix">
+    <link rel="stylesheet" href="./styles.css?v=phase17-role-baseline">
   </head>
   <body>
     <div class="app-shell">
@@ -139,8 +139,8 @@
           <details class="group card advanced-config advanced-card">
             <summary>高级配置</summary>
             <div class="grid-2">
-              <label class="field"><span>主 Agent</span><select name="main_agent"><option>auto</option><option>hermes</option><option>codex</option></select></label>
-              <label class="field"><span>审核 Agent</span><select name="review_agent"><option>auto</option><option>hermes</option><option>codex</option></select></label>
+              <label class="field legacy-controls"><span>主 Agent（旧版兼容设置）</span><select name="main_agent"><option>auto</option><option>hermes</option><option>codex</option></select></label>
+              <label class="field legacy-controls"><span>审核 Agent（旧版兼容设置）</span><select name="review_agent"><option>auto</option><option>hermes</option><option>codex</option></select></label>
             </div>
             <label class="field"><span>循环次数</span><input name="loop_rounds" type="number" min="1" max="5" value="1"></label>
             <div class="grid-2">
@@ -251,6 +251,58 @@
 
         <section class="tab-panel" data-panel="system">
           <div class="panel-head"><h2>系统日志</h2><span>轮询 fallback</span></div>
+          <section class="role-baseline-card">
+            <div class="card-head">
+              <div>
+                <h3>三代理角色连接基线</h3>
+                <p>工作流配置：<strong id="workflow-profile">读取中</strong></p>
+              </div>
+              <button id="role-baseline-run" class="primary" type="button">运行真实连接基线</button>
+            </div>
+            <div id="role-baseline-agents" class="role-grid">Codex（Windows）：规划、最终生成、修订
+Hermes（WSL）：任务执行
+ChatGPT（网页）：审核、终审</div>
+            <p id="role-baseline-status" class="role-result">尚未运行。仅在点击按钮后执行诊断。</p>
+            <pre id="role-baseline-artifacts" class="role-result">尚无诊断产物。</pre>
+          </section>
+          <section class="planner-settings">
+            <div class="card-head">
+              <div>
+                <h3>规划器设置</h3>
+                <p>ChatGPT 只生成规划；失败时由 Hermes 接管。</p>
+              </div>
+              <div class="button-row">
+                <button id="check-chatgpt" class="secondary" type="button">检测 ChatGPT</button>
+                <button id="save-planner-config" type="button">保存设置</button>
+              </div>
+            </div>
+            <div class="grid-2 planner-settings-grid">
+              <label class="field">
+                <span>规划器</span>
+                <select id="planner-mode">
+                  <option value="chatgpt">ChatGPT 优先，失败回退 Hermes</option>
+                  <option value="hermes">仅使用 Hermes</option>
+                </select>
+              </label>
+              <label class="field chatgpt-setting">
+                <span>ChatGPT 模式</span>
+                <select id="chatgpt-mode">
+                  <option value="mock">Mock</option>
+                  <option value="cdp">Chrome CDP</option>
+                </select>
+              </label>
+              <label class="field chatgpt-setting checkbox-field">
+                <input id="chatgpt-use-new-chat" type="checkbox" checked>
+                <span>每次规划使用新对话</span>
+              </label>
+              <label class="field chatgpt-setting">
+                <span>回复超时（30–1800 秒）</span>
+                <input id="chatgpt-reply-timeout" type="number" min="30" max="1800" value="600">
+              </label>
+            </div>
+            <p id="chatgpt-check-result" class="planner-check-result">尚未检测 ChatGPT。</p>
+            <p class="planner-privacy-note">启用 ChatGPT 时，任务内容会发送到外部服务；请勿提交未经授权的敏感资料。</p>
+          </section>
           <pre id="system-log" class="terminal terminal-log tall">APP 已加载。</pre>
         </section>
 
@@ -301,6 +353,6 @@
 
     <div id="toast" class="toast hidden"></div>
     </div>
-    <script src="./app.js?v=phase15-hotfix" defer></script>
+    <script src="./app.js?v=phase17-role-baseline" defer></script>
   </body>
 </html>

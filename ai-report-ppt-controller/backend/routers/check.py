@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
+from backend.services.agent_adapters import make_chatgpt_adapter
 from backend.services.chrome_client import check_chrome
 from backend.services.codex_client import check_codex
 from backend.services.hermes_client import check_hermes
@@ -23,3 +24,8 @@ def hermes() -> dict:
 @router.post("/chrome", dependencies=[Depends(require_api_token)])
 def chrome() -> dict:
     return check_chrome().model_dump()
+
+
+@router.post("/chatgpt", dependencies=[Depends(require_api_token)])
+def chatgpt() -> dict:
+    return make_chatgpt_adapter().health_check()

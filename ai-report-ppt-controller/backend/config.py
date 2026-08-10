@@ -6,7 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictInt
 
 
 ROOT_DIR = Path(__file__).resolve().parent
@@ -26,7 +26,19 @@ class AppConfig(BaseModel):
     api_token: str = Field(default_factory=lambda: os.getenv("APP_API_TOKEN", ""))
     codex_command: str = Field(default_factory=lambda: os.getenv("CODEX_COMMAND", "codex"))
     codex_mode: Literal["mock", "cli"] = Field(default_factory=lambda: os.getenv("CODEX_MODE", "mock"))
-    codex_exec_args: str = Field(default_factory=lambda: os.getenv("CODEX_EXEC_ARGS", "exec"))
+    codex_exec_args: str = Field(
+        default_factory=lambda: os.getenv(
+            "CODEX_EXEC_ARGS", "exec --sandbox workspace-write -"
+        )
+    )
+    codex_diagnostic_timeout_s: StrictInt = Field(
+        default_factory=lambda: int(os.getenv("CODEX_DIAGNOSTIC_TIMEOUT_S", "300")),
+        ge=30,
+        le=900,
+    )
+    workflow_profile: Literal["legacy", "three_agent_v2"] = Field(
+        default_factory=lambda: os.getenv("WORKFLOW_PROFILE", "three_agent_v2")
+    )
     codex_test_prompt: str = "Return OK only."
     hermes_command: str = Field(default_factory=lambda: os.getenv("HERMES_COMMAND", "hermes"))
     hermes_endpoint: str = Field(default_factory=lambda: os.getenv("HERMES_ENDPOINT", ""))
@@ -35,6 +47,14 @@ class AppConfig(BaseModel):
     hermes_run_path: str = Field(default_factory=lambda: os.getenv("HERMES_RUN_PATH", "/run"))
     hermes_mode: Literal["mock", "api"] = Field(default_factory=lambda: os.getenv("HERMES_MODE", "mock"))
     hermes_test_prompt: str = "Return OK only."
+    chatgpt_mode: Literal["mock", "cdp"] = Field(default_factory=lambda: os.getenv("CHATGPT_MODE", "mock"))
+    chatgpt_use_new_chat: bool = Field(default_factory=lambda: os.getenv("CHATGPT_USE_NEW_CHAT", "1") == "1")
+    chatgpt_reply_timeout_s: int = Field(
+        default_factory=lambda: int(os.getenv("CHATGPT_REPLY_TIMEOUT_S", "600")),
+        ge=30,
+        le=1800,
+    )
+    planner_mode: Literal["hermes", "chatgpt"] = Field(default_factory=lambda: os.getenv("PLANNER_MODE", "hermes"))
     chrome_host: str = Field(default_factory=lambda: os.getenv("CHROME_CDP_HOST", "127.0.0.1"))
     chrome_port: int = Field(default_factory=lambda: int(os.getenv("CHROME_CDP_PORT", "9222")))
     pass_score: int = Field(default_factory=lambda: int(os.getenv("PASS_SCORE", "85")))
