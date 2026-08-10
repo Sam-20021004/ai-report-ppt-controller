@@ -36,19 +36,50 @@ DIAGNOSTIC_SOURCE = (
     "Silicon has atomic number 14. This sentence is repository-owned diagnostic text.\n"
 )
 
-CODEX_PLAN_PROMPT = """Create role.plan.v1 JSON for one Hermes task that summarizes input/diagnostic_source.md.
-Write the same JSON to diagnostic_plan.json and return JSON only.
-The task output must be hermes_execution.json and the final output must be diagnostic_final.md.
+CODEX_PLAN_PROMPT = """Create exactly the JSON object below, with no extra keys and no Markdown fence.
+Write the identical JSON object to diagnostic_plan.json and return the identical JSON object only.
+{
+  "schema_version": "role.plan.v1",
+  "objective": "Validate the Windows Codex to WSL Hermes handoff",
+  "tasks": [
+    {
+      "task_id": "task-001",
+      "instruction": "Summarize input/diagnostic_source.md in one factual sentence",
+      "inputs": ["input/diagnostic_source.md"],
+      "dependencies": [],
+      "expected_outputs": ["hermes_execution.json"],
+      "acceptance_criteria": ["Return a non-empty summary grounded only in the input file"]
+    }
+  ],
+  "final_outputs": ["diagnostic_final.md"]
+}
 """
 
-HERMES_EXECUTION_PROMPT = """Execute task-001 from diagnostic_plan.json.
-Read input/diagnostic_source.md, write role.execution.v1 JSON to hermes_execution.json, and return the same JSON.
-Use no network access and report an empty sources array.
+HERMES_EXECUTION_PROMPT = """Execute task-001 from diagnostic_plan.json without network access.
+Read input/diagnostic_source.md. Replace SUMMARY_FROM_INPUT below with one non-empty factual sentence.
+Write exactly this JSON shape to hermes_execution.json and return the identical JSON object only.
+Do not add keys, change status, or wrap the JSON in Markdown.
+{
+  "schema_version": "role.execution.v1",
+  "task_id": "task-001",
+  "status": "success",
+  "summary": "SUMMARY_FROM_INPUT",
+  "sources": [],
+  "artifact_paths": ["hermes_execution.json"],
+  "errors": []
+}
 """
 
 CODEX_FINAL_PROMPT = """Read diagnostic_plan.json and hermes_execution.json.
-Write a short Markdown summary to diagnostic_final.md.
-Return role.finalization.v1 JSON whose artifact_paths contains diagnostic_final.md.
+Write a short factual Markdown summary to diagnostic_final.md.
+Then return exactly the JSON object below, with no extra keys and no Markdown fence.
+{
+  "schema_version": "role.finalization.v1",
+  "status": "success",
+  "summary": "Diagnostic finalization complete.",
+  "artifact_paths": ["diagnostic_final.md"],
+  "errors": []
+}
 """
 
 

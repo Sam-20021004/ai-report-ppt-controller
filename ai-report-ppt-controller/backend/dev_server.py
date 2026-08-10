@@ -71,7 +71,9 @@ DEFAULT_CONFIG = {
     "api_token": os.getenv("APP_API_TOKEN", ""),
     "codex_command": os.getenv("CODEX_COMMAND", "codex"),
     "codex_mode": os.getenv("CODEX_MODE", "mock"),
-    "codex_exec_args": os.getenv("CODEX_EXEC_ARGS", "exec"),
+    "codex_exec_args": os.getenv(
+        "CODEX_EXEC_ARGS", "exec --sandbox workspace-write -"
+    ),
     "codex_diagnostic_timeout_s": int(os.getenv("CODEX_DIAGNOSTIC_TIMEOUT_S", "300")),
     "workflow_profile": os.getenv("WORKFLOW_PROFILE", "three_agent_v2"),
     "codex_test_prompt": "Return OK only.",

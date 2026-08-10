@@ -26,7 +26,11 @@ class AppConfig(BaseModel):
     api_token: str = Field(default_factory=lambda: os.getenv("APP_API_TOKEN", ""))
     codex_command: str = Field(default_factory=lambda: os.getenv("CODEX_COMMAND", "codex"))
     codex_mode: Literal["mock", "cli"] = Field(default_factory=lambda: os.getenv("CODEX_MODE", "mock"))
-    codex_exec_args: str = Field(default_factory=lambda: os.getenv("CODEX_EXEC_ARGS", "exec"))
+    codex_exec_args: str = Field(
+        default_factory=lambda: os.getenv(
+            "CODEX_EXEC_ARGS", "exec --sandbox workspace-write -"
+        )
+    )
     codex_diagnostic_timeout_s: StrictInt = Field(
         default_factory=lambda: int(os.getenv("CODEX_DIAGNOSTIC_TIMEOUT_S", "300")),
         ge=30,

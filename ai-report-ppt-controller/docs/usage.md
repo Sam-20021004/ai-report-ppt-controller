@@ -16,7 +16,7 @@
 WORKFLOW_PROFILE=three_agent_v2
 CODEX_MODE=cli
 CODEX_COMMAND=codex
-CODEX_EXEC_ARGS=exec
+CODEX_EXEC_ARGS=exec --sandbox workspace-write -
 CODEX_DIAGNOSTIC_TIMEOUT_S=300
 HERMES_MODE=api
 HERMES_ENDPOINT=http://127.0.0.1:7788
@@ -28,6 +28,8 @@ CHROME_CDP_PORT=9222
 ```
 
 `CODEX_COMMAND` 必须指向 Windows 原生 Codex，三代理 V2 明确拒绝 `wsl:` 前缀。Hermes 继续运行在 WSL 内，由 Windows 通过本机 HTTP 桥接地址访问。
+
+`CODEX_EXEC_ARGS` 使用 Codex 官方非交互模式的最小写权限：`workspace-write` 只允许诊断工作区写入，末尾 `-` 明确表示从 stdin 读取完整提示词。不要把该设置扩大为 `danger-full-access`。
 
 ## 启动与就绪检查
 

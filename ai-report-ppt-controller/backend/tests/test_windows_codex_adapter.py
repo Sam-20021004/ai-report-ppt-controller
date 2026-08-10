@@ -95,6 +95,7 @@ def test_run_task_parses_json_and_uses_shell_false(monkeypatch, tmp_path) -> Non
     assert result["result"]["schema_version"] == "role.plan.v1"
     assert captured["kwargs"]["shell"] is False
     assert captured["kwargs"]["cwd"] == str(tmp_path)
+    assert captured["command"][1:] == ["exec", "--sandbox", "workspace-write", "-"]
     assert result["log_file"] == "logs/codex_role_planner.log"
 
 

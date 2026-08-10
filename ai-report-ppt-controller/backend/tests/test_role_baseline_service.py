@@ -10,7 +10,12 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from backend.config import AppConfig
-from backend.services.role_baseline_service import run_role_baseline
+from backend.services.role_baseline_service import (
+    CODEX_FINAL_PROMPT,
+    CODEX_PLAN_PROMPT,
+    HERMES_EXECUTION_PROMPT,
+    run_role_baseline,
+)
 
 
 def plan_payload() -> dict[str, Any]:
@@ -272,3 +277,13 @@ def test_trace_does_not_persist_prompts_or_absolute_workspace(tmp_path) -> None:
     assert result["status"] == "success"
     assert "Create role.plan.v1" not in trace_text
     assert str(tmp_path) not in trace_text
+
+
+def test_diagnostic_prompts_define_exact_strict_contracts() -> None:
+    assert '"schema_version": "role.plan.v1"' in CODEX_PLAN_PROMPT
+    assert '"expected_outputs": ["hermes_execution.json"]' in CODEX_PLAN_PROMPT
+    assert '"status": "success"' in HERMES_EXECUTION_PROMPT
+    assert '"artifact_paths": ["hermes_execution.json"]' in HERMES_EXECUTION_PROMPT
+    assert '"errors": []' in HERMES_EXECUTION_PROMPT
+    assert '"schema_version": "role.finalization.v1"' in CODEX_FINAL_PROMPT
+    assert '"artifact_paths": ["diagnostic_final.md"]' in CODEX_FINAL_PROMPT
